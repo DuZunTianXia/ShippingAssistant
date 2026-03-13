@@ -6,7 +6,7 @@
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:backend": "node local-dev.js",
     "dev:frontend": "cd frontend && npm run dev",
-    "build": "cd frontend && npm run build",
+    "build": "npm install && cd frontend && npm install && npm run build",
     "deploy": "npm run build && wrangler deploy",
     "db:migrate": "wrangler d1 execute shipping-db --local --file=./schema.sql",
     "db:migrate:prod": "wrangler d1 execute shipping-db --file=./schema.sql",
