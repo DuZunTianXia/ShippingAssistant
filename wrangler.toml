@@ -1,21 +1,25 @@
+# Cloudflare Worker 配置
+# 部署后在 Cloudflare Dashboard 中绑定 D1 数据库
+
 name = "shipping-assistant"
-main = "server/index.js"
+main = "server/worker.js"
 compatibility_date = "2024-01-01"
 
-[[d1_databases]]
-binding = "DB"
-database_name = "shipping-db"
-database_id = "your-database-id"
+# D1 数据库绑定 - 部署后在 Cloudflare Dashboard 中配置
+# 路径: Workers & Pages > shipping-assistant > Settings > Variables > D1 Database Bindings
+#[[d1_databases]]
+#binding = "DB"
+#database_name = "shipping-db"
+#database_id = ""
 
-[site]
-bucket = "./frontend/dist"
+[assets]
+directory = "./frontend/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = true
 
 [build]
 command = "cd frontend && npm run build"
 
 [build.environment]
 NODE_VERSION = "18"
-
-[[routes]]
-pattern = "/*"
-zone_name = "your-domain.com"
