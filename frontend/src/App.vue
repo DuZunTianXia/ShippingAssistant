@@ -36,11 +36,6 @@
       </div>
     </div>
 
-    <footer class="app-footer">
-      <div class="container">
-        <p>&copy; 2026 Shipping Assistant. All rights reserved.</p>
-      </div>
-    </footer>
   </div>
 </template>
 
@@ -174,20 +169,6 @@
   flex: 1;
   padding: var(--spacing-2xl) 0;
   background-color: var(--color-bg-main);
-}
-
-.app-footer {
-  background-color: var(--color-bg-card);
-  border-top: 1px solid var(--color-border);
-  padding: var(--spacing-lg) 0;
-  margin-top: auto;
-}
-
-.app-footer p {
-  text-align: center;
-  color: var(--color-text-muted);
-  font-size: 13px;
-  margin: 0;
 }
 
 @media (max-width: 768px) {
