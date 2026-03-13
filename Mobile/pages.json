@@ -1,0 +1,28 @@
+{
+	"pages": [
+		{
+			"path": "pages/index/index",
+			"style": {
+				"navigationBarTitleText": "闲鱼发货助手"
+			}
+		},
+		{
+			"path": "pages/fields/fields",
+			"style": {
+				"navigationBarTitleText": "字段管理"
+			}
+		},
+		{
+			"path": "pages/shipping/shipping",
+			"style": {
+				"navigationBarTitleText": "发货管理"
+			}
+		}
+	],
+	"globalStyle": {
+		"navigationBarTextStyle": "black",
+		"navigationBarTitleText": "闲鱼发货助手",
+		"navigationBarBackgroundColor": "#ffffff",
+		"backgroundColor": "#f5f5f5"
+	}
+}

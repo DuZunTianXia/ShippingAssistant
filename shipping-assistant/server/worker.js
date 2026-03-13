@@ -259,40 +259,14 @@ async function handleGetRecords(productId, env, headers) {
 }
 
 async function handleCreateRecord(productId, request, env, headers) {
-  try {
-    // 检查 DB 绑定
-    if (!env.DB) {
-      throw new Error('Database not bound')
-    }
-    
-    const body = await request.json()
-    console.log('Create record body:', body)
-    
-    // 验证必要字段
-    if (!body.data) {
-      throw new Error('Missing data field')
-    }
-    
-    // 适配前端发送的数据格式
-    const data = body.data
-    const status = body.status || 'pending'
-    // 自动生成 order_id（使用时间戳+随机数）
-    const order_id = body.order_id || `ORD${Date.now()}${Math.floor(Math.random() * 1000)}`
-    
-    const result = await env.DB.prepare(
-      'INSERT INTO shipping_records (product_id, order_id, data, status) VALUES (?, ?, ?, ?)'
-    ).bind(productId, order_id, JSON.stringify(data), status).run()
-    
-    return new Response(JSON.stringify({ success: true, id: result.meta.last_row_id }), {
-      headers: { ...headers, 'Content-Type': 'application/json' }
-    })
-  } catch (error) {
-    console.error('Create record error:', error)
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { ...headers, 'Content-Type': 'application/json' }
-    })
-  }
+  const body = await request.json()
+  const { order_id, status, data } = body
+  const result = await env.DB.prepare(
+    'INSERT INTO shipping_records (product_id, order_id, data, status) VALUES (?, ?, ?, ?)'
+  ).bind(productId, order_id, JSON.stringify(data), status).run()
+  return new Response(JSON.stringify({ success: true, id: result.meta.last_row_id }), {
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  })
 }
 
 async function handleUpdateRecord(id, request, env, headers) {
