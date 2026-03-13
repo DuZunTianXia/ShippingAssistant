@@ -1,0 +1,303 @@
+// Cloudflare Workers 入口文件 - 统一部署版本
+// 处理 API 请求和静态文件服务
+
+// API 路由处理
+export async function handleRequest(request, env, ctx) {
+  const url = new URL(request.url)
+  const path = url.pathname
+
+  // CORS 处理
+  if (request.method === 'OPTIONS') {
+    return new Response(null, {
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+      }
+    })
+  }
+
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+  }
+
+  try {
+    // API 接口
+    if (path.startsWith('/api')) {
+      return handleAPIRequest(request, env, url, corsHeaders)
+    }
+
+    // 静态文件服务
+    return handleStaticAsset(request, env, path, corsHeaders)
+
+  } catch (error) {
+    console.error('Error:', error)
+    return new Response(JSON.stringify({ error: 'Internal server error' }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    })
+  }
+}
+
+// 处理 API 请求
+async function handleAPIRequest(request, env, url, corsHeaders) {
+  const path = url.pathname
+
+  // 商品相关
+  if (path === '/api/products' && request.method === 'GET') {
+    return handleGetProducts(env, corsHeaders)
+  }
+  if (path === '/api/products' && request.method === 'POST') {
+    return handleCreateProduct(request, env, corsHeaders)
+  }
+  if (path.match(/^\/api\/products\/\d+$/) && request.method === 'PUT') {
+    const id = path.split('/').pop()
+    return handleUpdateProduct(id, request, env, corsHeaders)
+  }
+  if (path.match(/^\/api\/products\/\d+$/) && request.method === 'DELETE') {
+    const id = path.split('/').pop()
+    return handleDeleteProduct(id, env, corsHeaders)
+  }
+
+  // 字段相关
+  if (path.match(/^\/api\/products\/\d+\/fields$/) && request.method === 'GET') {
+    const productId = path.split('/')[3]
+    return handleGetFields(productId, env, corsHeaders)
+  }
+  if (path.match(/^\/api\/products\/\d+\/fields$/) && request.method === 'POST') {
+    const productId = path.split('/')[3]
+    return handleCreateField(productId, request, env, corsHeaders)
+  }
+  if (path.match(/^\/api\/fields\/\d+$/) && request.method === 'DELETE') {
+    const id = path.split('/').pop()
+    return handleDeleteField(id, env, corsHeaders)
+  }
+  if (path.match(/^\/api\/fields\/\d+$/) && request.method === 'PUT') {
+    const id = path.split('/').pop()
+    return handleUpdateField(id, request, env, corsHeaders)
+  }
+
+  // 记录相关
+  if (path.match(/^\/api\/products\/\d+\/records$/) && request.method === 'GET') {
+    const productId = path.split('/')[3]
+    return handleGetRecords(productId, env, corsHeaders)
+  }
+  if (path.match(/^\/api\/products\/\d+\/records$/) && request.method === 'POST') {
+    const productId = path.split('/')[3]
+    return handleCreateRecord(productId, request, env, corsHeaders)
+  }
+  if (path.match(/^\/api\/records\/\d+$/) && request.method === 'PUT') {
+    const id = path.split('/').pop()
+    return handleUpdateRecord(id, request, env, corsHeaders)
+  }
+  if (path.match(/^\/api\/records\/\d+$/) && request.method === 'DELETE') {
+    const id = path.split('/').pop()
+    return handleDeleteRecord(id, env, corsHeaders)
+  }
+  if (path.match(/^\/api\/records\/order\/[^/]+$/) && request.method === 'GET') {
+    const orderId = path.split('/').pop()
+    return handleGetRecordByOrderId(orderId, env, corsHeaders)
+  }
+
+  // 健康检查
+  if (path === '/api/health') {
+    return new Response(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    })
+  }
+
+  // 404
+  return new Response(JSON.stringify({ error: 'API endpoint not found' }), {
+    status: 404,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+  })
+}
+
+// 处理静态文件
+async function handleStaticAsset(request, env, path, corsHeaders) {
+  let assetPath = path === '/' ? '/index.html' : path
+
+  try {
+    const object = await env.ASSETS.get(assetPath.slice(1))
+
+    if (object === null) {
+      const indexFile = await env.ASSETS.get('index.html')
+      if (indexFile) {
+        return new Response(indexFile, {
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'text/html; charset=utf-8'
+          }
+        })
+      }
+      return new Response('Not Found', { status: 404, headers: corsHeaders })
+    }
+
+    const headers = new Headers(corsHeaders)
+    headers.set('Content-Type', getContentType(assetPath))
+    headers.set('Cache-Control', 'public, max-age=86400')
+
+    return new Response(object, { headers })
+
+  } catch (error) {
+    console.error('Static asset error:', error)
+    return new Response('Not Found', { status: 404, headers: corsHeaders })
+  }
+}
+
+function getContentType(path) {
+  const ext = path.split('.').pop().toLowerCase()
+  const types = {
+    'html': 'text/html; charset=utf-8',
+    'css': 'text/css; charset=utf-8',
+    'js': 'application/javascript; charset=utf-8',
+    'json': 'application/json; charset=utf-8',
+    'png': 'image/png',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'gif': 'image/gif',
+    'svg': 'image/svg+xml',
+    'ico': 'image/x-icon',
+    'woff': 'font/woff',
+    'woff2': 'font/woff2',
+    'ttf': 'font/ttf',
+    'eot': 'application/vnd.ms-fontobject'
+  }
+  return types[ext] || 'application/octet-stream'
+}
+
+// ==================== 商品管理 ====================
+async function handleGetProducts(env, headers) {
+  const result = await env.DB.prepare('SELECT * FROM products ORDER BY created_at DESC').all()
+  return new Response(JSON.stringify(result.results || result), {
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  })
+}
+
+async function handleCreateProduct(request, env, headers) {
+  const body = await request.json()
+  const { name, description } = body
+  const result = await env.DB.prepare(
+    'INSERT INTO products (name, description) VALUES (?, ?)'
+  ).bind(name, description).run()
+  return new Response(JSON.stringify({ success: true, id: result.meta.last_row_id }), {
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  })
+}
+
+async function handleUpdateProduct(id, request, env, headers) {
+  const body = await request.json()
+  const { name, description } = body
+  await env.DB.prepare(
+    'UPDATE products SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).bind(name, description, id).run()
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  })
+}
+
+async function handleDeleteProduct(id, env, headers) {
+  await env.DB.prepare('DELETE FROM products WHERE id = ?').bind(id).run()
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  })
+}
+
+// ==================== 字段管理 ====================
+async function handleGetFields(productId, env, headers) {
+  const result = await env.DB.prepare(
+    'SELECT * FROM custom_fields WHERE product_id = ? ORDER BY sort_order ASC'
+  ).bind(productId).all()
+  return new Response(JSON.stringify(result.results || result), {
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  })
+}
+
+async function handleCreateField(productId, request, env, headers) {
+  const body = await request.json()
+  const { name, label, type, options, required, sort_order } = body
+  const result = await env.DB.prepare(
+    'INSERT INTO custom_fields (product_id, name, label, type, options, required, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).bind(productId, name, label, type, options, required ? 1 : 0, sort_order).run()
+  return new Response(JSON.stringify({ success: true, id: result.meta.last_row_id }), {
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  })
+}
+
+async function handleDeleteField(id, env, headers) {
+  await env.DB.prepare('DELETE FROM custom_fields WHERE id = ?').bind(id).run()
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  })
+}
+
+async function handleUpdateField(id, request, env, headers) {
+  const body = await request.json()
+  const { name, label, type, options, required, sort_order } = body
+  await env.DB.prepare(
+    'UPDATE custom_fields SET name = ?, label = ?, type = ?, options = ?, required = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).bind(name, label, type, options, required ?1 : 0, sort_order, id).run()
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  })
+}
+
+// ==================== 记录管理 ====================
+async function handleGetRecords(productId, env, headers) {
+  const result = await env.DB.prepare(
+    'SELECT * FROM shipping_records WHERE product_id = ? ORDER BY created_at DESC'
+  ).bind(productId).all()
+  const records = (result.results || result).map(record => ({
+    ...record,
+    data: record.data ? JSON.parse(record.data) : {}
+  }))
+  return new Response(JSON.stringify(records), {
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  })
+}
+
+async function handleCreateRecord(productId, request, env, headers) {
+  const body = await request.json()
+  const { order_id, status, data } = body
+  const result = await env.DB.prepare(
+    'INSERT INTO shipping_records (product_id, order_id, data, status) VALUES (?, ?, ?, ?)'
+  ).bind(productId, order_id, JSON.stringify(data), status).run()
+  return new Response(JSON.stringify({ success: true, id: result.meta.last_row_id }), {
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  })
+}
+
+async function handleUpdateRecord(id, request, env, headers) {
+  const body = await request.json()
+  const { order_id, status, data } = body
+  await env.DB.prepare(
+    'UPDATE shipping_records SET order_id = ?, data = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).bind(order_id, JSON.stringify(data), status, id).run()
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  })
+}
+
+async function handleDeleteRecord(id, env, headers) {
+  await env.DB.prepare('DELETE FROM shipping_records WHERE id = ?').bind(id).run()
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  })
+}
+
+async function handleGetRecordByOrderId(orderId, env, headers) {
+  const result = await env.DB.prepare('SELECT * FROM shipping_records WHERE order_id = ?').bind(orderId).all()
+  const records = (result.results || result).map(record => ({
+    ...record,
+    data: record.data ? JSON.parse(record.data) : {}
+  }))
+  return new Response(JSON.stringify(records), {
+    headers: { ...headers, 'Content-Type': 'application/json' }
+  })
+}
+
+export default {
+  fetch: handleRequest
+}

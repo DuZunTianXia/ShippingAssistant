@@ -1,0 +1,26 @@
+{
+  "name": "shipping-assistant",
+  "version": "1.0.0",
+  "description": "闲鱼发货助手 - 自定义字段管理系统",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "node local-dev.js",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "deploy": "npm run build && wrangler deploy",
+    "db:migrate": "wrangler d1 execute shipping-db --local --file=./schema.sql",
+    "db:migrate:prod": "wrangler d1 execute shipping-db --file=./schema.sql",
+    "db:create": "wrangler d1 create shipping-db"
+  },
+  "keywords": ["shipping", "cloudflare", "vue3", "worker"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "wrangler": "^3.22.0"
+  }
+}
