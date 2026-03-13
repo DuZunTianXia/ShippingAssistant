@@ -7,7 +7,9 @@
     "dev:backend": "node local-dev.js",
     "dev:frontend": "cd frontend && npm run dev",
     "build": "npm install && cd frontend && npm install && npm run build",
-    "deploy": "npm run build && wrangler deploy",
+    "build:worker": "echo 'Worker build complete'",
+    "deploy": "wrangler deploy",
+    "deploy:frontend": "cd frontend && npm run build && wrangler pages deploy dist --project-name=shipping-assistant",
     "db:migrate": "wrangler d1 execute shipping-db --local --file=./schema.sql",
     "db:migrate:prod": "wrangler d1 execute shipping-db --file=./schema.sql",
     "db:create": "wrangler d1 create shipping-db"

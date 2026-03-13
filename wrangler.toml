@@ -1,5 +1,5 @@
 # Cloudflare Worker 配置
-# 部署后在 Cloudflare Dashboard 中绑定 D1 数据库
+# 统一部署：Worker 处理 API + 静态文件服务
 
 name = "shippingassistant"
 main = "server/worker.js"
@@ -12,11 +12,12 @@ compatibility_date = "2024-01-01"
 #database_name = "shipping-db"
 #database_id = ""
 
+# 静态文件配置 - Worker 同时服务前端
 [assets]
-directory = "./frontend/dist"
+directory = "frontend/dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = true
+run_worker_first = false
 
 [build]
 command = "npm run build"
