@@ -9,6 +9,12 @@
           </svg>
           添加记录
         </button>
+        <button class="btn btn-secondary cursor-pointer" @click="openDuplicateConfig">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.006 8.25 4.97 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.375a.375.375 0 01.375.375v.375a.375.375 0 01-.375.375H6.75a.375.375 0 01-.375-.375v-.375a.375.375 0 01.375-.375zm0 3h.375a.375.375 0 01.375.375v.375a.375.375 0 01-.375.375H6.75a.375.375 0 01-.375-.375v-.375a.375.375 0 01.375-.375zm0 3h.375a.375.375 0 01.375.375v.375a.375.375 0 01-.375.375H6.75a.375.375 0 01-.375-.375v-.375a.375.375 0 01.375-.375z" />
+          </svg>
+          查重配置
+        </button>
       </div>
       <button class="btn btn-ghost cursor-pointer" @click="goBack">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
@@ -18,7 +24,55 @@
       </button>
     </div>
 
-    <!-- 弹窗 -->
+    <!-- 查重配置弹窗 -->
+    <div v-if="duplicateConfigVisible" class="dialog-overlay" @click="closeDuplicateConfig">
+      <div class="dialog-card" @click.stop>
+        <div class="dialog-header">
+          <h3>配置查重字段</h3>
+          <button class="dialog-close cursor-pointer" @click="closeDuplicateConfig">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div class="dialog-content">
+          <p class="config-description">选择用于查重检测的字段，当新记录的这些字段值与已有记录相同时，将被视为重复记录。</p>
+          <div class="field-checkboxes">
+            <div
+              v-for="field in fields"
+              :key="field.id"
+              class="field-checkbox-item"
+              :class="{ 'checked': isDuplicateFieldChecked(field.name) }"
+              @click="toggleDuplicateField(field.name)"
+            >
+              <div class="checkbox">
+                <svg v-if="isDuplicateFieldChecked(field.name)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                </svg>
+              </div>
+              <div class="field-info">
+                <div class="field-name">{{ field.label }}</div>
+                <div class="field-key">{{ field.name }}</div>
+              </div>
+            </div>
+          </div>
+          <div v-if="duplicateCheckFields.length === 0" class="no-fields-warning">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+            </svg>
+            <span>未选择任何查重字段，将检查所有字段</span>
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button class="btn btn-ghost cursor-pointer" @click="closeDuplicateConfig">
+            取消
+          </button>
+          <button class="btn btn-primary cursor-pointer" @click="saveDuplicateConfig">
+            保存配置
+          </button>
+        </div>
+      </div>
+    </div>
     <div v-if="dialogVisible" class="dialog-overlay" @click="closeDialog">
       <div class="dialog-card" @click.stop>
         <div class="dialog-header">
@@ -195,6 +249,10 @@ const records = ref([])
 const editingId = ref(null)
 const dialogVisible = ref(false)
 const stats = ref({ total: 0, shipped: 0, pending: 0 })
+
+// 查重配置相关
+const duplicateConfigVisible = ref(false)
+const duplicateCheckFields = ref([])
 
 const fetchFields = async () => {
   try {
@@ -392,10 +450,57 @@ const goBack = () => {
   router.push('/')
 }
 
+// 查重配置相关方法
+const openDuplicateConfig = () => {
+  duplicateConfigVisible.value = true
+}
+
+const closeDuplicateConfig = () => {
+  duplicateConfigVisible.value = false
+}
+
+const fetchDuplicateConfig = async () => {
+  try {
+    const response = await axios.get(`/api/products/${productId.value}/duplicate-config`)
+    if (response.data.success) {
+      duplicateCheckFields.value = response.data.checkFields || []
+    }
+  } catch (error) {
+    console.error('获取查重配置失败:', error)
+    ElMessage.error('获取查重配置失败')
+  }
+}
+
+const saveDuplicateConfig = async () => {
+  try {
+    await axios.put(`/api/products/${productId.value}/duplicate-config`, {
+      checkFields: duplicateCheckFields.value
+    })
+    ElMessage.success('查重配置已保存')
+    closeDuplicateConfig()
+  } catch (error) {
+    ElMessage.error('保存查重配置失败')
+  }
+}
+
+const toggleDuplicateField = (fieldName) => {
+  const index = duplicateCheckFields.value.indexOf(fieldName)
+  if (index > -1) {
+    duplicateCheckFields.value.splice(index, 1)
+  } else {
+    duplicateCheckFields.value.push(fieldName)
+  }
+}
+
+const isDuplicateFieldChecked = (fieldName) => {
+  return duplicateCheckFields.value.includes(fieldName)
+}
+
 onMounted(() => {
   if (productId.value) {
     fetchFields()
     fetchRecords()
+    fetchDuplicateConfig()
   }
 })
 </script>
@@ -780,6 +885,108 @@ onMounted(() => {
   opacity: 0.5;
   cursor: not-allowed;
   transform: none !important;
+}
+
+.btn-secondary {
+  background-color: var(--color-bg-input);
+  color: var(--color-text-secondary);
+}
+
+.btn-secondary:hover {
+  background-color: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.config-description {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-lg);
+  line-height: 1.5;
+}
+
+.field-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.field-checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.field-checkbox-item:hover {
+  background-color: var(--color-bg-hover);
+  border-color: var(--color-primary);
+}
+
+.field-checkbox-item.checked {
+  background-color: rgba(8, 145, 178, 0.05);
+  border-color: var(--color-primary);
+}
+
+.checkbox {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+}
+
+.field-checkbox-item.checked .checkbox {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.checkbox svg {
+  width: 14px;
+  height: 14px;
+  color: white;
+}
+
+.field-info {
+  flex: 1;
+}
+
+.field-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.field-key {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin-top: 2px;
+}
+
+.no-fields-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-lg);
+  padding: var(--spacing-md);
+  background-color: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-md);
+  color: var(--color-warning);
+  font-size: 13px;
+}
+
+.no-fields-warning svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
 }
 
 .btn svg {

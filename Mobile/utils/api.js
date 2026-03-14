@@ -81,6 +81,11 @@ export const getRecordByOrderId = (orderId) => {
   return request(`/api/records/order/${orderId}`)
 }
 
+// 获取统计信息
+export const getRecordStats = (productId) => {
+  return request(`/api/products/${productId}/records/stats`)
+}
+
 // ==================== 健康检查 ====================
 export const healthCheck = () => {
   return request('/api/health')

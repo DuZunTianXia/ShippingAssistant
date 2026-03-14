@@ -61,6 +61,16 @@ async function handleAPIRequest(request, env, url, corsHeaders) {
     return handleDeleteProduct(id, env, corsHeaders)
   }
 
+  // 商品查重配置相关
+  if (path.match(/^\/api\/products\/\d+\/duplicate-config$/) && request.method === 'GET') {
+    const productId = path.split('/')[3]
+    return handleGetProductDuplicateConfig(productId, env, corsHeaders)
+  }
+  if (path.match(/^\/api\/products\/\d+\/duplicate-config$/) && request.method === 'PUT') {
+    const productId = path.split('/')[3]
+    return handleUpdateProductDuplicateConfig(productId, request, env, corsHeaders)
+  }
+
   // 字段相关
   if (path.match(/^\/api\/products\/\d+\/fields$/) && request.method === 'GET') {
     const productId = path.split('/')[3]
@@ -182,6 +192,92 @@ async function handleGetProducts(env, headers) {
   return new Response(JSON.stringify(result.results || result), {
     headers: { ...headers, 'Content-Type': 'application/json' }
   })
+}
+
+// 获取商品查重配置（从 localStorage 存储的 KV 中读取）
+async function handleGetProductDuplicateConfig(productId, env, headers) {
+  try {
+    // 从 KV 存储读取配置（使用 D1 数据库的 settings 字段或单独存储）
+    // 这里使用一个简单方案：存储在 D1 的 product_settings 表中
+    const result = await env.DB.prepare(
+      'SELECT key, value FROM product_settings WHERE product_id = ? AND key = ?'
+    ).bind(productId, 'duplicate_check_fields').first()
+    
+    let checkFields = []
+    if (result && result.value) {
+      try {
+        checkFields = JSON.parse(result.value)
+      } catch (e) {
+        checkFields = []
+      }
+    }
+    
+    return new Response(JSON.stringify({ 
+      success: true, 
+      checkFields: checkFields 
+    }), {
+      headers: { ...headers, 'Content-Type': 'application/json' }
+    })
+  } catch (error) {
+    console.error('Get duplicate config error:', error)
+    // 如果表不存在，返回空配置
+    return new Response(JSON.stringify({ 
+      success: true, 
+      checkFields: [] 
+    }), {
+      headers: { ...headers, 'Content-Type': 'application/json' }
+    })
+  }
+}
+
+// 更新商品查重配置
+async function handleUpdateProductDuplicateConfig(productId, request, env, headers) {
+  try {
+    const body = await request.json()
+    const { checkFields } = body
+    
+    if (!Array.isArray(checkFields)) {
+      return new Response(JSON.stringify({ error: 'checkFields must be an array' }), {
+        status: 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      })
+    }
+    
+    // 先尝试创建表（如果不存在）
+    try {
+      await env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS product_settings (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          product_id INTEGER NOT NULL,
+          key TEXT NOT NULL,
+          value TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(product_id, key)
+        )
+      `).run()
+    } catch (e) {
+      // 表可能已存在，忽略错误
+    }
+    
+    // 插入或更新配置
+    await env.DB.prepare(`
+      INSERT INTO product_settings (product_id, key, value) 
+      VALUES (?, ?, ?)
+      ON CONFLICT(product_id, key) 
+      DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `).bind(productId, 'duplicate_check_fields', JSON.stringify(checkFields)).run()
+    
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { ...headers, 'Content-Type': 'application/json' }
+    })
+  } catch (error) {
+    console.error('Update duplicate config error:', error)
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: { ...headers, 'Content-Type': 'application/json' }
+    })
+  }
 }
 
 async function handleCreateProduct(request, env, headers) {
@@ -362,6 +458,25 @@ async function checkDuplicateFields(productId, data, env) {
     'SELECT * FROM shipping_records WHERE product_id = ?'
   ).bind(productId).all()
   
+  // 获取查重配置
+  const configResult = await env.DB.prepare(
+    'SELECT duplicate_check_fields FROM products WHERE id = ?'
+  ).bind(productId).first()
+  
+  let checkFields = []
+  if (configResult && configResult.duplicate_check_fields) {
+    try {
+      checkFields = JSON.parse(configResult.duplicate_check_fields)
+    } catch (e) {
+      checkFields = []
+    }
+  }
+  
+  // 如果没有配置，检查所有字段
+  if (checkFields.length === 0) {
+    checkFields = Object.keys(data)
+  }
+  
   const records = (result.results || result).map(record => ({
     ...record,
     data: record.data ? JSON.parse(record.data) : {}
@@ -369,7 +484,9 @@ async function checkDuplicateFields(productId, data, env) {
   
   for (const record of records) {
     const duplicateFields = []
-    for (const [key, value] of Object.entries(data)) {
+    // 只检查配置的字段
+    for (const key of checkFields) {
+      const value = data[key]
       if (record.data[key] === value && value !== null && value !== undefined && value !== '') {
         duplicateFields.push(key)
       }
