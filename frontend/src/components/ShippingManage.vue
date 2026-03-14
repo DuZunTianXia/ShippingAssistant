@@ -185,7 +185,7 @@
               <tr v-for="(record, index) in records" :key="record.id">
                 <td>{{ index + 1 }}</td>
                 <td v-for="field in fields" :key="field.id">
-                  {{ record.data[field.name] || '-' }}
+                  {{ getFieldValue(record, field) }}
                 </td>
                 <td>
                   <span class="badge" :class="getStatusBadgeClass(record.status)">
@@ -370,7 +370,8 @@ const copyRecord = (record) => {
     // 生成复制文本
     const text = fieldsToCopy
       .map(field => {
-        const value = record.data[field.name]
+        // 兼容旧数据的中文键名
+        const value = record.data[field.name] ?? record.data[field.label]
         if (value === undefined || value === null || value === '') {
           return null
         }
@@ -393,6 +394,13 @@ const copyRecord = (record) => {
   } catch (error) {
     ElMessage.error('复制失败')
   }
+}
+
+// 获取字段值（兼容旧数据的中文键名）
+const getFieldValue = (record, field) => {
+  // 优先使用新的英文键名（field.name），如果没有再尝试旧的中文键名（field.label）
+  const value = record.data[field.name] ?? record.data[field.label]
+  return value || '-'
 }
 
 const quickShip = async (record) => {

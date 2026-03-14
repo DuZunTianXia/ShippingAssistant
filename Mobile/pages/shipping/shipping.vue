@@ -82,9 +82,9 @@
             v-for="field in displayFields" 
             :key="field.id"
           >
-            <text class="field-label">{{ field.name }}:</text>
-            <text class="field-value" :title="record.data[field.name]">
-              {{ truncateText(record.data[field.name], 20) || '-' }}
+            <text class="field-label">{{ field.label || field.name }}:</text>
+            <text class="field-value" :title="getFieldValue(record, field)">
+              {{ truncateText(getFieldValue(record, field), 20) || '-' }}
             </text>
           </view>
           <view v-if="hasMoreFields" class="more-fields-hint" @click="showAllFields(record)">
@@ -137,7 +137,7 @@
             :key="field.id"
           >
             <text class="form-label">
-              {{ field.name }}
+              {{ field.label || field.name }}
               <text class="required" v-if="field.required">*</text>
             </text>
             <!-- 文本输入 -->
@@ -146,14 +146,14 @@
               class="form-input" 
               :type="field.type === 'number' ? 'number' : 'text'"
               v-model="recordForm.data[field.name]" 
-              :placeholder="`请输入${field.name}`"
+              :placeholder="`请输入${field.label || field.name}`"
             />
             <!-- 多行文本 -->
             <textarea 
               v-else-if="field.type === 'textarea'"
               class="form-textarea" 
               v-model="recordForm.data[field.name]" 
-              :placeholder="`请输入${field.name}`"
+              :placeholder="`请输入${field.label || field.name}`"
             />
             <!-- 下拉选择 -->
             <picker 
@@ -165,7 +165,7 @@
             >
               <view class="form-picker">
                 <text :class="{ 'placeholder': !recordForm.data[field.name] }">
-                  {{ recordForm.data[field.name] || `请选择${field.name}` }}
+                  {{ recordForm.data[field.name] || `请选择${field.label || field.name}` }}
                 </text>
                 <text class="picker-arrow">›</text>
               </view>
@@ -354,11 +354,17 @@ export default {
       this.recordForm.status = e.detail.value ? 'shipped' : 'pending'
     },
 
+    // 获取字段值（兼容旧数据的中文键名）
+    getFieldValue(record, field) {
+      // 优先使用新的英文键名（field.name），如果没有再尝试旧的中文键名（field.label）
+      return record.data[field.name] ?? record.data[field.label]
+    },
+
     copyRecord(record) {
       const lines = []
       this.fieldList.forEach(field => {
-        const value = record.data[field.name] || ''
-        lines.push(`${field.name}: ${value}`)
+        const value = this.getFieldValue(record, field) || ''
+        lines.push(`${field.label || field.name}: ${value}`)
       })
       const text = lines.join('\n')
       
