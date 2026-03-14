@@ -51,8 +51,7 @@
                 </svg>
               </div>
               <div class="field-info">
-                <div class="field-name">{{ field.label }}</div>
-                <div class="field-key">{{ field.name }}</div>
+                <div class="field-name">{{ field.label }} <span class="field-key">({{ field.name }})</span></div>
               </div>
             </div>
           </div>

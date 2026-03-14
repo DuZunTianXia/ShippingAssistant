@@ -126,6 +126,11 @@ async function handleAPIRequest(request, env, url, corsHeaders) {
     })
   }
 
+  // 字段迁移（修复name/label颠倒的问题）
+  if (path === '/api/migrate-fields' && request.method === 'POST') {
+    return handleMigrateFields(env, corsHeaders)
+  }
+
   // 404
   return new Response(JSON.stringify({ error: 'API endpoint not found' }), {
     status: 404,
@@ -323,7 +328,29 @@ async function handleGetFields(productId, env, headers) {
 
 async function handleCreateField(productId, request, env, headers) {
   const body = await request.json()
-  const { name, label, type, options, required, sort_order } = body
+  let { name, label, type, options, required, sort_order } = body
+  
+  // 确保name是英文标识符格式（小写、下划线、无空格）
+  if (name) {
+    name = name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+  }
+  // 如果没有提供name，从label生成（转拼音或用默认值）
+  if (!name && label) {
+    // 简单映射：常见中文字段名转英文
+    const labelToName = {
+      '邮箱': 'email',
+      '密码': 'password',
+      '地址': 'address',
+      '姓名': 'name',
+      '电话': 'phone',
+      '手机': 'mobile',
+      '备注': 'remark',
+      'api密钥': 'apikey',
+      'apikey': 'apikey'
+    }
+    name = labelToName[label] || label.toLowerCase().replace(/\s+/g, '_')
+  }
+  
   const result = await env.DB.prepare(
     'INSERT INTO custom_fields (product_id, name, label, type, options, required, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)'
   ).bind(productId, name, label, type, options, required ? 1 : 0, sort_order).run()
@@ -341,7 +368,13 @@ async function handleDeleteField(id, env, headers) {
 
 async function handleUpdateField(id, request, env, headers) {
   const body = await request.json()
-  const { name, label, type, options, required, sort_order } = body
+  let { name, label, type, options, required, sort_order } = body
+  
+  // 确保name是英文标识符格式
+  if (name) {
+    name = name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+  }
+  
   await env.DB.prepare(
     'UPDATE custom_fields SET name = ?, label = ?, type = ?, options = ?, required = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
   ).bind(name, label, type, options, required ?1 : 0, sort_order, id).run()
@@ -638,6 +671,80 @@ async function handleGetRecordByOrderId(orderId, env, headers) {
   return new Response(JSON.stringify(records), {
     headers: { ...headers, 'Content-Type': 'application/json' }
   })
+}
+
+// 字段迁移：修复name/label颠倒问题
+async function handleMigrateFields(env, headers) {
+  try {
+    // 获取所有字段
+    const result = await env.DB.prepare('SELECT * FROM custom_fields').all()
+    const fields = result.results || result
+    
+    const migrated = []
+    
+    for (const field of fields) {
+      const oldName = field.name
+      const oldLabel = field.label
+      
+      // 判断是否需要迁移：如果name是中文或label是英文，则需要互换
+      const isNameChinese = /[\u4e00-\u9fa5]/.test(oldName)
+      const isLabelEnglish = /^[a-zA-Z0-9_]+$/.test(oldLabel) && !/[\u4e00-\u9fa5]/.test(oldLabel)
+      
+      if (isNameChinese || isLabelEnglish) {
+        // 互换 name 和 label
+        let newName = oldLabel // 英文作为name
+        let newLabel = oldName // 中文作为label
+        
+        // 确保name是英文标识符格式
+        if (newName) {
+          newName = newName.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+        }
+        
+        // 如果name还是中文，尝试映射
+        if (!newName || /[\u4e00-\u9fa5]/.test(newName)) {
+          const labelToName = {
+            '邮箱': 'email',
+            '密码': 'password',
+            '地址': 'address',
+            '姓名': 'name',
+            '电话': 'phone',
+            '手机': 'mobile',
+            '备注': 'remark',
+            'api密钥': 'apikey',
+            'apikey': 'apikey'
+          }
+          newName = labelToName[newLabel] || 'field_' + field.id
+        }
+        
+        // 更新字段
+        await env.DB.prepare(
+          'UPDATE custom_fields SET name = ?, label = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        ).bind(newName, newLabel, field.id).run()
+        
+        migrated.push({
+          id: field.id,
+          oldName,
+          oldLabel,
+          newName,
+          newLabel
+        })
+      }
+    }
+    
+    return new Response(JSON.stringify({
+      success: true,
+      message: `迁移完成，共迁移 ${migrated.length} 个字段`,
+      migrated
+    }), {
+      headers: { ...headers, 'Content-Type': 'application/json' }
+    })
+  } catch (error) {
+    console.error('Migrate fields error:', error)
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: { ...headers, 'Content-Type': 'application/json' }
+    })
+  }
 }
 
 export default {
