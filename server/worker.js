@@ -260,13 +260,15 @@ async function handleUpdateProductDuplicateConfig(productId, request, env, heade
       // 表可能已存在，忽略错误
     }
     
-    // 插入或更新配置
-    await env.DB.prepare(`
-      INSERT INTO product_settings (product_id, key, value) 
-      VALUES (?, ?, ?)
-      ON CONFLICT(product_id, key) 
-      DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-    `).bind(productId, 'duplicate_check_fields', JSON.stringify(checkFields)).run()
+    // 先删除旧配置
+    await env.DB.prepare(
+      'DELETE FROM product_settings WHERE product_id = ? AND key = ?'
+    ).bind(productId, 'duplicate_check_fields').run()
+    
+    // 插入新配置
+    await env.DB.prepare(
+      'INSERT INTO product_settings (product_id, key, value) VALUES (?, ?, ?)'
+    ).bind(productId, 'duplicate_check_fields', JSON.stringify(checkFields)).run()
     
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...headers, 'Content-Type': 'application/json' }
