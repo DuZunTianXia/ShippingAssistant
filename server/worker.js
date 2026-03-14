@@ -460,13 +460,13 @@ async function checkDuplicateFields(productId, data, env) {
   
   // 获取查重配置
   const configResult = await env.DB.prepare(
-    'SELECT duplicate_check_fields FROM products WHERE id = ?'
-  ).bind(productId).first()
+    'SELECT value FROM product_settings WHERE product_id = ? AND key = ?'
+  ).bind(productId, 'duplicate_check_fields').first()
   
   let checkFields = []
-  if (configResult && configResult.duplicate_check_fields) {
+  if (configResult && configResult.value) {
     try {
-      checkFields = JSON.parse(configResult.duplicate_check_fields)
+      checkFields = JSON.parse(configResult.value)
     } catch (e) {
       checkFields = []
     }
