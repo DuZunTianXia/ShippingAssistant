@@ -121,7 +121,11 @@ async function handleAPIRequest(request, env, url, corsHeaders) {
 
   // 健康检查
   if (path === '/api/health') {
-    return new Response(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }), {
+    return new Response(JSON.stringify({ 
+      status: 'ok', 
+      version: '2026-03-14-v2', // 字段映射优化版本
+      timestamp: new Date().toISOString() 
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
   }
