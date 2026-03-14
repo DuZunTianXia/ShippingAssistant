@@ -639,6 +639,8 @@ async function handleCheckDuplicate(productId, request, env, headers) {
           const recordValue = recordData[fieldName] ?? recordData[fieldLabel]
           const existingValue = existing.data[fieldName] ?? existing.data[fieldLabel]
           
+          console.log(`比较字段[${fieldName}]: recordValue=${recordValue}, existingValue=${existingValue}, match=${recordValue === existingValue}`)
+          
           if (recordValue === existingValue && 
               recordValue !== null && 
               recordValue !== undefined && 
