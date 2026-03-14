@@ -84,6 +84,14 @@ async function handleAPIRequest(request, env, url, corsHeaders) {
     const productId = path.split('/')[3]
     return handleGetRecords(productId, env, corsHeaders)
   }
+  if (path.match(/^\/api\/products\/\d+\/records\/check-duplicate$/) && request.method === 'POST') {
+    const productId = path.split('/')[3]
+    return handleCheckDuplicate(productId, request, env, corsHeaders)
+  }
+  if (path.match(/^\/api\/products\/\d+\/records\/stats$/) && request.method === 'GET') {
+    const productId = path.split('/')[3]
+    return handleGetRecordStats(productId, env, corsHeaders)
+  }
   if (path.match(/^\/api\/products\/\d+\/records$/) && request.method === 'POST') {
     const productId = path.split('/')[3]
     return handleCreateRecord(productId, request, env, corsHeaders)
@@ -258,6 +266,46 @@ async function handleGetRecords(productId, env, headers) {
   })
 }
 
+// 获取记录统计信息
+async function handleGetRecordStats(productId, env, headers) {
+  try {
+    if (!env.DB) {
+      throw new Error('Database not bound')
+    }
+    
+    // 获取总数
+    const totalResult = await env.DB.prepare(
+      'SELECT COUNT(*) as count FROM shipping_records WHERE product_id = ?'
+    ).bind(productId).first()
+    
+    // 获取已发货数量（status = active 或 shipped）
+    const shippedResult = await env.DB.prepare(
+      "SELECT COUNT(*) as count FROM shipping_records WHERE product_id = ? AND status IN ('active', 'shipped', 'completed')"
+    ).bind(productId).first()
+    
+    // 获取未发货数量（status = pending 或其他）
+    const pendingResult = await env.DB.prepare(
+      "SELECT COUNT(*) as count FROM shipping_records WHERE product_id = ? AND status NOT IN ('active', 'shipped', 'completed')"
+    ).bind(productId).first()
+    
+    const stats = {
+      total: totalResult?.count || 0,
+      shipped: shippedResult?.count || 0,
+      pending: pendingResult?.count || 0
+    }
+    
+    return new Response(JSON.stringify({ success: true, stats }), {
+      headers: { ...headers, 'Content-Type': 'application/json' }
+    })
+  } catch (error) {
+    console.error('Get record stats error:', error)
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: { ...headers, 'Content-Type': 'application/json' }
+    })
+  }
+}
+
 async function handleCreateRecord(productId, request, env, headers) {
   try {
     // 检查 DB 绑定
@@ -279,6 +327,19 @@ async function handleCreateRecord(productId, request, env, headers) {
     // 自动生成 order_id（使用时间戳+随机数）
     const order_id = body.order_id || `ORD${Date.now()}${Math.floor(Math.random() * 1000)}`
     
+    // 查重处理：检查 data 中的字段是否已存在
+    const duplicateCheck = await checkDuplicateFields(productId, data, env)
+    if (duplicateCheck.hasDuplicate) {
+      return new Response(JSON.stringify({ 
+        error: 'Duplicate record found',
+        duplicateFields: duplicateCheck.duplicateFields,
+        existingRecord: duplicateCheck.existingRecord
+      }), {
+        status: 409,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      })
+    }
+    
     const result = await env.DB.prepare(
       'INSERT INTO shipping_records (product_id, order_id, data, status) VALUES (?, ?, ?, ?)'
     ).bind(productId, order_id, JSON.stringify(data), status).run()
@@ -288,6 +349,114 @@ async function handleCreateRecord(productId, request, env, headers) {
     })
   } catch (error) {
     console.error('Create record error:', error)
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: { ...headers, 'Content-Type': 'application/json' }
+    })
+  }
+}
+
+// 检查重复字段
+async function checkDuplicateFields(productId, data, env) {
+  const result = await env.DB.prepare(
+    'SELECT * FROM shipping_records WHERE product_id = ?'
+  ).bind(productId).all()
+  
+  const records = (result.results || result).map(record => ({
+    ...record,
+    data: record.data ? JSON.parse(record.data) : {}
+  }))
+  
+  for (const record of records) {
+    const duplicateFields = []
+    for (const [key, value] of Object.entries(data)) {
+      if (record.data[key] === value && value !== null && value !== undefined && value !== '') {
+        duplicateFields.push(key)
+      }
+    }
+    if (duplicateFields.length > 0) {
+      return {
+        hasDuplicate: true,
+        duplicateFields,
+        existingRecord: record
+      }
+    }
+  }
+  
+  return { hasDuplicate: false }
+}
+
+// 批量检查重复接口
+async function handleCheckDuplicate(productId, request, env, headers) {
+  try {
+    if (!env.DB) {
+      throw new Error('Database not bound')
+    }
+    
+    const body = await request.json()
+    const { records, fields } = body
+    
+    if (!records || !Array.isArray(records) || records.length === 0) {
+      return new Response(JSON.stringify({ error: 'Missing records array' }), {
+        status: 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      })
+    }
+    
+    // 获取该商品的所有记录
+    const result = await env.DB.prepare(
+      'SELECT * FROM shipping_records WHERE product_id = ?'
+    ).bind(productId).all()
+    
+    const existingRecords = (result.results || result).map(record => ({
+      ...record,
+      data: record.data ? JSON.parse(record.data) : {}
+    }))
+    
+    // 检查每条记录是否重复
+    const checkResults = records.map((record, index) => {
+      for (const existing of existingRecords) {
+        const duplicateFields = []
+        // 如果指定了 fields，只检查这些字段；否则检查所有字段
+        const checkFields = fields || Object.keys(record.data || record)
+        
+        for (const field of checkFields) {
+          const recordValue = record.data ? record.data[field] : record[field]
+          const existingValue = existing.data[field]
+          
+          if (recordValue === existingValue && 
+              recordValue !== null && 
+              recordValue !== undefined && 
+              recordValue !== '') {
+            duplicateFields.push(field)
+          }
+        }
+        
+        if (duplicateFields.length > 0) {
+          return {
+            index,
+            isDuplicate: true,
+            duplicateFields,
+            existingRecordId: existing.id
+          }
+        }
+      }
+      return { index, isDuplicate: false }
+    })
+    
+    const duplicates = checkResults.filter(r => r.isDuplicate)
+    
+    return new Response(JSON.stringify({
+      success: true,
+      total: records.length,
+      duplicates: duplicates,
+      duplicateCount: duplicates.length,
+      isDuplicate: duplicates.length > 0
+    }), {
+      headers: { ...headers, 'Content-Type': 'application/json' }
+    })
+  } catch (error) {
+    console.error('Check duplicate error:', error)
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...headers, 'Content-Type': 'application/json' }

@@ -16,6 +16,8 @@ export const icons = {
   back: '/static/icons/back.svg',
   // 复制图标
   copy: '/static/icons/copy.svg',
+  // 快速发货图标
+  'quick-ship': '/static/icons/quick-ship.svg',
   // 更多图标
   more: '/static/icons/more.svg'
 }

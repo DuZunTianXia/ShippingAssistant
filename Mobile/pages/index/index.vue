@@ -226,7 +226,7 @@ export default {
 <style lang="scss">
 .container {
   min-height: 100vh;
-  background-color: #f5f5f5;
+  background-color: #EFF6FF;
 }
 
 .page-content {
@@ -234,6 +234,7 @@ export default {
   box-sizing: border-box;
 }
 
+/* 空状态 */
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -251,48 +252,56 @@ export default {
 
 .empty-title {
   font-size: 32rpx;
-  color: #333;
+  color: #1E40AF;
   font-weight: 600;
   margin-bottom: 16rpx;
 }
 
 .empty-desc {
   font-size: 28rpx;
-  color: #999;
+  color: #64748B;
 }
 
+/* 商品列表 */
 .product-list {
-  padding: 20rpx;
+  padding: 24rpx;
 }
 
 .product-card {
   background: #fff;
-  border-radius: 20rpx;
-  padding: 30rpx;
-  margin-bottom: 20rpx;
-  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.06);
+  border-radius: 24rpx;
+  padding: 32rpx;
+  margin-bottom: 24rpx;
+  box-shadow: 0 4rpx 16rpx rgba(37, 99, 235, 0.08);
+  transition: all 200ms ease;
+}
+
+.product-card:active {
+  transform: translateY(-2rpx);
+  box-shadow: 0 8rpx 24rpx rgba(37, 99, 235, 0.12);
 }
 
 .product-header {
   display: flex;
   align-items: flex-start;
-  margin-bottom: 20rpx;
+  margin-bottom: 24rpx;
 }
 
 .product-icon {
-  width: 80rpx;
-  height: 80rpx;
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-  border-radius: 16rpx;
+  width: 88rpx;
+  height: 88rpx;
+  background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+  border-radius: 20rpx;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-right: 20rpx;
+  margin-right: 24rpx;
+  box-shadow: 0 4rpx 12rpx rgba(37, 99, 235, 0.25);
 }
 
 .icon-image {
-  width: 40rpx;
-  height: 40rpx;
+  width: 44rpx;
+  height: 44rpx;
 }
 
 .product-info {
@@ -300,26 +309,26 @@ export default {
 }
 
 .product-name {
-  font-size: 32rpx;
+  font-size: 34rpx;
   font-weight: 600;
-  color: #333;
+  color: #1E40AF;
   display: block;
   margin-bottom: 8rpx;
 }
 
 .product-desc {
   font-size: 26rpx;
-  color: #999;
+  color: #64748B;
   display: block;
 }
 
 .product-meta {
-  margin-bottom: 20rpx;
+  margin-bottom: 24rpx;
 }
 
 .meta-text {
   font-size: 24rpx;
-  color: #999;
+  color: #94A3B8;
 }
 
 .product-actions {

@@ -1,22 +1,74 @@
 <template>
   <view class="container">
+    <!-- 统计信息 -->
+    <view class="stats-bar" v-if="records.length > 0">
+      <view class="stat-item">
+        <text class="stat-label">总计</text>
+        <text class="stat-value stat-total">{{ stats.total }}</text>
+      </view>
+      <view class="stat-item">
+        <text class="stat-label">已发货</text>
+        <text class="stat-value stat-shipped">{{ stats.shipped }}</text>
+      </view>
+      <view class="stat-item">
+        <text class="stat-label">待发货</text>
+        <text class="stat-value stat-pending">{{ stats.pending }}</text>
+      </view>
+    </view>
+
+    <!-- 状态筛选 -->
+    <view class="status-filter" v-if="records.length > 0">
+      <view 
+        class="filter-tab" 
+        :class="{ active: statusFilter === 'all' }"
+        @click="statusFilter = 'all'"
+      >
+        全部
+      </view>
+      <view 
+        class="filter-tab" 
+        :class="{ active: statusFilter === 'pending' }"
+        @click="statusFilter = 'pending'"
+      >
+        待发货
+      </view>
+      <view 
+        class="filter-tab" 
+        :class="{ active: statusFilter === 'shipped' }"
+        @click="statusFilter = 'shipped'"
+      >
+        已发货
+      </view>
+    </view>
+
+    <!-- 加载状态 -->
+    <view v-if="loading" class="loading-state">
+      <view class="loading-spinner"></view>
+      <text class="loading-text">加载中...</text>
+    </view>
+
     <!-- 空状态 -->
-    <view v-if="records.length === 0" class="empty-state">
+    <view v-else-if="filteredRecords.length === 0" class="empty-state">
       <image class="empty-icon" src="/static/empty-record.png" mode="aspectFit"></image>
-      <text class="empty-title">还没有发货记录</text>
+      <text class="empty-title">
+        {{ statusFilter === 'pending' ? '没有待发货记录' : statusFilter === 'shipped' ? '没有已发货记录' : '还没有发货记录' }}
+      </text>
       <text class="empty-desc">点击添加按钮创建发货记录</text>
     </view>
 
     <!-- 记录列表 -->
-    <scroll-view v-else class="record-list" scroll-y>
+    <scroll-view v-if="!loading && filteredRecords.length > 0" class="record-list" scroll-y>
       <view 
         class="record-card" 
-        v-for="(record, index) in records" 
+        v-for="(record, index) in filteredRecords" 
         :key="record.id"
         :class="{ 'shipped': record.status === 'shipped' }"
       >
         <view class="record-header">
-          <view class="record-index">#{{ index + 1 }}</view>
+          <view class="record-meta">
+            <text class="record-index">#{{ index + 1 }}</text>
+            <text class="record-date">{{ formatDate(record.created_at) }}</text>
+          </view>
           <view class="record-status">
             <text :class="['status-tag', record.status]">
               {{ record.status === 'shipped' ? '已发货' : '待发货' }}
@@ -25,19 +77,24 @@
         </view>
         
         <view class="record-fields">
-          <view class="field-row" v-for="field in fieldList" :key="field.id">
-            <text class="field-label">{{ field.label }}:</text>
-            <text class="field-value">{{ record.data[field.name] || '-' }}</text>
+          <view 
+            class="field-row" 
+            v-for="field in displayFields" 
+            :key="field.id"
+          >
+            <text class="field-label">{{ field.name }}:</text>
+            <text class="field-value" :title="record.data[field.name]">
+              {{ truncateText(record.data[field.name], 20) || '-' }}
+            </text>
           </view>
-        </view>
-
-        <view class="record-time">
-          <text class="time-text">{{ formatDate(record.created_at) }}</text>
+          <view v-if="hasMoreFields" class="more-fields-hint" @click="showAllFields(record)">
+            <text class="more-text">还有 {{ fieldList.length - maxDisplayFields }} 个字段 ></text>
+          </view>
         </view>
 
         <view class="record-actions">
           <view class="action-btn copy" @click="copyRecord(record)">
-            <text class="btn-icon">📋</text>
+            <svg-icon name="copy" :size="28" />
             <text class="btn-text">复制</text>
           </view>
           <view 
@@ -45,15 +102,15 @@
             v-if="record.status === 'pending'"
             @click="quickShip(record.id)"
           >
-            <text class="btn-icon">🚀</text>
+            <svg-icon name="quick-ship" :size="32" />
             <text class="btn-text">发货</text>
           </view>
           <view class="action-btn edit" @click="editRecord(record)">
-            <text class="btn-icon">✏️</text>
+            <svg-icon name="edit" :size="32" />
             <text class="btn-text">编辑</text>
           </view>
           <view class="action-btn delete" @click="deleteRecord(record.id)">
-            <text class="btn-icon">🗑️</text>
+            <svg-icon name="delete" :size="32" />
             <text class="btn-text">删除</text>
           </view>
         </view>
@@ -80,7 +137,7 @@
             :key="field.id"
           >
             <text class="form-label">
-              {{ field.label }}
+              {{ field.name }}
               <text class="required" v-if="field.required">*</text>
             </text>
             <!-- 文本输入 -->
@@ -89,14 +146,14 @@
               class="form-input" 
               :type="field.type === 'number' ? 'number' : 'text'"
               v-model="recordForm.data[field.name]" 
-              :placeholder="`请输入${field.label}`"
+              :placeholder="`请输入${field.name}`"
             />
             <!-- 多行文本 -->
             <textarea 
               v-else-if="field.type === 'textarea'"
               class="form-textarea" 
               v-model="recordForm.data[field.name]" 
-              :placeholder="`请输入${field.label}`"
+              :placeholder="`请输入${field.name}`"
             />
             <!-- 下拉选择 -->
             <picker 
@@ -108,7 +165,7 @@
             >
               <view class="form-picker">
                 <text :class="{ 'placeholder': !recordForm.data[field.name] }">
-                  {{ recordForm.data[field.name] || `请选择${field.label}` }}
+                  {{ recordForm.data[field.name] || `请选择${field.name}` }}
                 </text>
                 <text class="picker-arrow">›</text>
               </view>
@@ -143,9 +200,13 @@
 </template>
 
 <script>
-import { getRecords, createRecord, updateRecord, deleteRecord, getFields } from '@/utils/api.js'
+import { getRecords, createRecord, updateRecord, deleteRecord, getFields, getRecordStats } from '@/utils/api.js'
+import SvgIcon from '@/components/SvgIcon.vue'
 
 export default {
+  components: {
+    SvgIcon
+  },
   data() {
     return {
       productId: null,
@@ -155,6 +216,10 @@ export default {
       copyFieldIds: [],
       showAddModal: false,
       editMode: false,
+      statusFilter: 'all',
+      maxDisplayFields: 3,
+      loading: false,
+      stats: { total: 0, shipped: 0, pending: 0 },
       recordForm: {
         id: null,
         data: {},
@@ -166,6 +231,21 @@ export default {
   computed: {
     fieldList() {
       return this.fields.filter(f => this.copyFieldIds.includes(f.id))
+    },
+    // 显示的字段列表（限制数量）
+    displayFields() {
+      return this.fieldList.slice(0, this.maxDisplayFields)
+    },
+    // 是否有更多字段
+    hasMoreFields() {
+      return this.fieldList.length > this.maxDisplayFields
+    },
+    // 筛选后的记录
+    filteredRecords() {
+      if (this.statusFilter === 'all') {
+        return this.records
+      }
+      return this.records.filter(r => r.status === this.statusFilter)
     }
   },
 
@@ -184,9 +264,12 @@ export default {
 
   methods: {
     async loadData() {
+      this.loading = true
       await this.loadFields()
       await this.loadRecords()
+      await this.loadStats()
       this.loadCopyConfig()
+      this.loading = false
     },
 
     async loadFields() {
@@ -208,6 +291,32 @@ export default {
           icon: 'none'
         })
       }
+    },
+
+    async loadStats() {
+      try {
+        const data = await getRecordStats(this.productId)
+        if (data.success) {
+          this.stats = data.stats
+        }
+      } catch (error) {
+        console.error('加载统计失败:', error)
+      }
+    },
+
+    // 截断文本
+    truncateText(text, maxLength) {
+      if (!text) return ''
+      if (text.length <= maxLength) return text
+      return text.slice(0, maxLength) + '...'
+    },
+
+    // 显示所有字段（弹窗或展开）
+    showAllFields(record) {
+      // 跳转到详情页或展开显示
+      uni.navigateTo({
+        url: `/pages/record-detail/record-detail?recordId=${record.id}&productId=${this.productId}`
+      })
     },
 
     loadCopyConfig() {
@@ -249,7 +358,7 @@ export default {
       const lines = []
       this.fieldList.forEach(field => {
         const value = record.data[field.name] || ''
-        lines.push(`${field.label}: ${value}`)
+        lines.push(`${field.name}: ${value}`)
       })
       const text = lines.join('\n')
       
@@ -307,7 +416,7 @@ export default {
       // 验证必填字段
       for (const field of this.fields) {
         if (field.required && !this.recordForm.data[field.name]) {
-          uni.showToast({ title: `请填写${field.label}`, icon: 'none' })
+          uni.showToast({ title: `请填写${field.name}`, icon: 'none' })
           return
         }
       }
@@ -356,8 +465,69 @@ export default {
 <style lang="scss">
 .container {
   min-height: 100vh;
-  background-color: #f5f5f5;
-  padding: 20rpx;
+  background-color: #EFF6FF;
+}
+
+/* 统计信息栏 */
+.stats-bar {
+  display: flex;
+  justify-content: space-around;
+  padding: 20rpx 24rpx;
+  background: linear-gradient(135deg, #fff 0%, #f8fafc 100%);
+  border-bottom: 1rpx solid #E2E8F0;
+  margin-bottom: 8rpx;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.stat-label {
+  font-size: 24rpx;
+  color: #64748B;
+}
+
+.stat-value {
+  font-size: 36rpx;
+  font-weight: 700;
+}
+
+.stat-total {
+  color: #1E293B;
+}
+
+.stat-shipped {
+  color: #10B981;
+}
+
+.stat-pending {
+  color: #F59E0B;
+}
+
+/* 状态筛选栏 */
+.status-filter {
+  display: flex;
+  padding: 16rpx 24rpx;
+  background: #fff;
+  border-bottom: 1rpx solid #E2E8F0;
+  gap: 16rpx;
+}
+
+.filter-tab {
+  font-size: 26rpx;
+  padding: 10rpx 24rpx;
+  background: #F1F5F9;
+  color: #64748B;
+  border-radius: 24rpx;
+  font-weight: 500;
+}
+
+.filter-tab.active {
+  background: #2563EB;
+  color: #fff;
 }
 
 .empty-state {
@@ -368,131 +538,189 @@ export default {
   padding: 200rpx 40rpx;
 }
 
-.empty-icon {
-  width: 200rpx;
-  height: 200rpx;
-  margin-bottom: 40rpx;
-  opacity: 0.5;
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 200rpx 40rpx;
+}
+
+.loading-spinner {
+  width: 60rpx;
+  height: 60rpx;
+  border: 4rpx solid #E2E8F0;
+  border-top-color: #2563EB;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 20rpx;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-text {
+  font-size: 28rpx;
+  color: #64748B;
 }
 
 .empty-title {
   font-size: 32rpx;
-  color: #333;
+  color: #1E40AF;
   font-weight: 600;
   margin-bottom: 16rpx;
 }
 
 .empty-desc {
   font-size: 28rpx;
-  color: #999;
+  color: #64748B;
 }
 
 .record-list {
   height: 100vh;
+  padding: 0 20rpx;
 }
 
 .record-card {
   background: #fff;
-  border-radius: 20rpx;
-  padding: 30rpx;
-  margin-bottom: 20rpx;
-  border-left: 8rpx solid #f59e0b;
+  border-radius: 16rpx;
+  padding: 16rpx 20rpx;
+  margin-bottom: 12rpx;
+  border-left: 4rpx solid #F97316;
+  box-shadow: 0 2rpx 8rpx rgba(37, 99, 235, 0.06);
 }
 
 .record-card.shipped {
-  border-left-color: #10b981;
+  border-left-color: #10B981;
 }
 
 .record-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20rpx;
+  margin-bottom: 8rpx;
+}
+
+.record-meta {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
 }
 
 .record-index {
-  font-size: 32rpx;
+  font-size: 28rpx;
   font-weight: 700;
-  color: #3b82f6;
+  color: #2563EB;
+}
+
+.record-date {
+  font-size: 20rpx;
+  color: #94A3B8;
+  margin-left: 12rpx;
+}
+
+.record-status {
+  flex-shrink: 0;
 }
 
 .status-tag {
-  font-size: 24rpx;
-  padding: 6rpx 16rpx;
-  border-radius: 8rpx;
+  font-size: 20rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 12rpx;
+  font-weight: 500;
 }
 
 .status-tag.pending {
-  color: #f59e0b;
-  background: #fffbeb;
+  color: #F97316;
+  background: #FFF7ED;
 }
 
 .status-tag.shipped {
-  color: #10b981;
-  background: #ecfdf5;
+  color: #10B981;
+  background: #ECFDF5;
 }
 
 .record-fields {
-  margin-bottom: 20rpx;
+  margin-bottom: 8rpx;
 }
 
 .field-row {
   display: flex;
-  margin-bottom: 12rpx;
+  margin-bottom: 4rpx;
+  line-height: 1.3;
 }
 
 .field-label {
-  font-size: 26rpx;
-  color: #999;
-  width: 140rpx;
+  font-size: 22rpx;
+  color: #94A3B8;
+  width: 100rpx;
   flex-shrink: 0;
 }
 
 .field-value {
-  font-size: 26rpx;
-  color: #333;
+  font-size: 24rpx;
+  color: #334155;
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.more-fields-hint {
+  margin-top: 8rpx;
+  padding: 8rpx 0;
+  text-align: center;
+}
+
+.more-text {
+  font-size: 22rpx;
+  color: #64748B;
 }
 
 .record-time {
-  margin-bottom: 20rpx;
+  margin-bottom: 8rpx;
 }
 
 .time-text {
-  font-size: 24rpx;
-  color: #999;
+  font-size: 20rpx;
+  color: #94A3B8;
 }
 
 .record-actions {
   display: flex;
   justify-content: space-around;
-  border-top: 1rpx solid #f0f0f0;
-  padding-top: 20rpx;
+  border-top: 1rpx solid #E2E8F0;
+  padding-top: 12rpx;
+  margin-top: 4rpx;
 }
 
 .action-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 10rpx 20rpx;
+  padding: 8rpx 12rpx;
+  min-width: 60rpx;
 }
 
-.btn-icon {
-  font-size: 32rpx;
-  margin-bottom: 4rpx;
+.action-btn:active {
+  opacity: 0.7;
 }
 
 .btn-text {
-  font-size: 22rpx;
-  color: #666;
+  font-size: 20rpx;
+  color: #64748B;
+  margin-top: 4rpx;
 }
 
 .action-btn.delete .btn-text {
-  color: #ef4444;
+  color: #EF4444;
 }
 
 .action-btn.quick-ship .btn-text {
-  color: #3b82f6;
+  color: #2563EB;
 }
 
 .fab-btn {
@@ -501,19 +729,23 @@ export default {
   bottom: 60rpx;
   width: 100rpx;
   height: 100rpx;
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  background: linear-gradient(135deg, #F97316 0%, #EA580C 100%);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8rpx 24rpx rgba(59, 130, 246, 0.4);
+  box-shadow: 0 8rpx 24rpx rgba(249, 115, 22, 0.4);
   z-index: 50;
+  transition: all 200ms ease;
+}
+
+.fab-btn:active {
+  transform: scale(0.95);
 }
 
 .fab-icon {
   color: #fff;
   font-size: 48rpx;
-  font-weight: 300;
 }
 
 /* 弹窗样式 */
@@ -523,7 +755,8 @@ export default {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(30, 64, 175, 0.4);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -539,6 +772,7 @@ export default {
   display: flex;
   flex-direction: column;
   animation: slideUp 0.3s ease;
+  box-shadow: 0 20rpx 40rpx rgba(37, 99, 235, 0.2);
 }
 
 .modal-header {
@@ -546,19 +780,19 @@ export default {
   justify-content: space-between;
   align-items: center;
   padding: 30rpx;
-  border-bottom: 1rpx solid #f0f0f0;
+  border-bottom: 1rpx solid #E2E8F0;
   flex-shrink: 0;
 }
 
 .modal-title {
   font-size: 32rpx;
   font-weight: 600;
-  color: #333;
+  color: #1E40AF;
 }
 
 .modal-close {
   font-size: 48rpx;
-  color: #999;
+  color: #94A3B8;
   line-height: 1;
 }
 
@@ -571,14 +805,14 @@ scroll-view.modal-body {
 }
 
 .form-item {
-  margin-bottom: 30rpx;
+  margin-bottom: 24rpx;
 }
 
 .form-label {
   display: block;
   font-size: 28rpx;
-  color: #333;
-  margin-bottom: 16rpx;
+  color: #334155;
+  margin-bottom: 12rpx;
   font-weight: 500;
 }
 
@@ -588,43 +822,55 @@ scroll-view.modal-body {
 
 .form-input {
   height: 80rpx;
-  background: #f5f5f5;
+  background: #F1F5F9;
   border-radius: 12rpx;
   padding: 0 24rpx;
   font-size: 28rpx;
-  color: #333;
+  color: #334155;
+  border: 1rpx solid transparent;
+}
+
+.form-input:focus {
+  border-color: #2563EB;
+  background: #fff;
 }
 
 .form-picker {
   height: 80rpx;
-  background: #f5f5f5;
+  background: #F1F5F9;
   border-radius: 12rpx;
   padding: 0 24rpx;
   font-size: 28rpx;
-  color: #333;
+  color: #334155;
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
 .placeholder {
-  color: #999;
+  color: #94A3B8;
 }
 
 .picker-arrow {
-  color: #999;
+  color: #64748B;
   font-size: 32rpx;
 }
 
 .form-textarea {
   height: 160rpx;
-  background: #f5f5f5;
+  background: #F1F5F9;
   border-radius: 12rpx;
   padding: 20rpx 24rpx;
   font-size: 28rpx;
-  color: #333;
+  color: #334155;
   width: 100%;
   box-sizing: border-box;
+  border: 1rpx solid transparent;
+}
+
+.form-textarea:focus {
+  border-color: #2563EB;
+  background: #fff;
 }
 
 .switch-item {
@@ -643,23 +889,34 @@ scroll-view.modal-body {
 .btn {
   flex: 1;
   height: 80rpx;
-  border-radius: 12rpx;
+  border-radius: 16rpx;
   font-size: 28rpx;
-  font-weight: 500;
+  font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
+  transition: all 200ms ease;
 }
 
 .btn-secondary {
-  background: #f5f5f5;
-  color: #666;
+  background: #F1F5F9;
+  color: #64748B;
+}
+
+.btn-secondary:active {
+  background: #E2E8F0;
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
   color: #fff;
+  box-shadow: 0 4rpx 12rpx rgba(37, 99, 235, 0.3);
+}
+
+.btn-primary:active {
+  transform: translateY(-2rpx);
+  box-shadow: 0 8rpx 16rpx rgba(37, 99, 235, 0.4);
 }
 
 .safe-area-bottom {

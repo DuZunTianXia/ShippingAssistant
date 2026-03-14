@@ -94,6 +94,20 @@
     </div>
 
     <div class="table-section">
+      <div class="stats-bar" v-if="records.length > 0">
+        <div class="stat-item">
+          <span class="stat-label">总计:</span>
+          <span class="stat-value stat-total">{{ stats.total }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">已发货:</span>
+          <span class="stat-value stat-shipped">{{ stats.shipped }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">待发货:</span>
+          <span class="stat-value stat-pending">{{ stats.pending }}</span>
+        </div>
+      </div>
       <div class="table-card">
         <h3>发货记录列表</h3>
         <div v-if="records.length === 0" class="empty-state">
@@ -180,6 +194,7 @@ const fields = ref([])
 const records = ref([])
 const editingId = ref(null)
 const dialogVisible = ref(false)
+const stats = ref({ total: 0, shipped: 0, pending: 0 })
 
 const fetchFields = async () => {
   try {
@@ -194,8 +209,21 @@ const fetchRecords = async () => {
   try {
     const response = await axios.get(`/api/products/${productId.value}/records`)
     records.value = response.data
+    // 同时获取统计信息
+    fetchStats()
   } catch (error) {
     ElMessage.error('获取记录列表失败')
+  }
+}
+
+const fetchStats = async () => {
+  try {
+    const response = await axios.get(`/api/products/${productId.value}/records/stats`)
+    if (response.data.success) {
+      stats.value = response.data.stats
+    }
+  } catch (error) {
+    console.error('获取统计信息失败:', error)
   }
 }
 
@@ -375,6 +403,44 @@ onMounted(() => {
 <style scoped>
 .shipping-manage {
   padding: 0;
+}
+
+.stats-bar {
+  display: flex;
+  gap: var(--spacing-xl);
+  padding: var(--spacing-md) var(--spacing-lg);
+  background: linear-gradient(135deg, var(--color-bg-card) 0%, var(--color-bg-hover) 100%);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--spacing-md);
+  border: 1px solid var(--color-border);
+}
+
+.stat-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.stat-label {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.stat-value {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.stat-total {
+  color: var(--color-text-primary);
+}
+
+.stat-shipped {
+  color: var(--color-success);
+}
+
+.stat-pending {
+  color: var(--color-warning);
 }
 
 .header {
