@@ -552,12 +552,12 @@ async function handleCheckDuplicate(productId, request, env, headers) {
     }
     
     const body = await request.json()
-    const { records, fields } = body
+    const { records, fields: requestFields } = body
     
     console.log('=== handleCheckDuplicate 调试 ===')
     console.log('productId:', productId)
     console.log('records:', JSON.stringify(records, null, 2))
-    console.log('fields:', fields)
+    console.log('requestFields:', requestFields)
     
     if (!records || !Array.isArray(records) || records.length === 0) {
       return new Response(JSON.stringify({ error: 'Missing records array' }), {
@@ -577,43 +577,77 @@ async function handleCheckDuplicate(productId, request, env, headers) {
     }))
     
     console.log('existingRecords count:', existingRecords.length)
-    console.log('first existing record:', existingRecords[0] ? JSON.stringify(existingRecords[0], null, 2) : 'none')
+    
+    // 获取字段定义，建立 name -> label 映射
+    const fieldsResult = await env.DB.prepare(
+      'SELECT name, label FROM custom_fields WHERE product_id = ?'
+    ).bind(productId).all()
+    const fieldDefinitions = fieldsResult.results || []
+    
+    // 建立映射：英文 name -> 中文 label（数据中的键名）
+    const nameToLabel = {}
+    const labelToName = {}
+    fieldDefinitions.forEach(f => {
+      nameToLabel[f.name] = f.label
+      labelToName[f.label] = f.name
+    })
+    
+    console.log('字段映射 name->label:', nameToLabel)
+    
+    // 获取查重配置（优先使用数据库配置）
+    let checkFieldNames = [] // 英文字段名列表
+    try {
+      const configResult = await env.DB.prepare(
+        'SELECT value FROM product_settings WHERE product_id = ? AND key = ?'
+      ).bind(productId, 'duplicate_check_fields').first()
+      
+      if (configResult && configResult.value) {
+        checkFieldNames = JSON.parse(configResult.value)
+        console.log('使用数据库查重配置:', checkFieldNames)
+      }
+    } catch (e) {
+      console.log('获取查重配置失败:', e.message)
+    }
+    
+    // 如果没有数据库配置，使用请求中的字段（但需要转换为英文）
+    if (checkFieldNames.length === 0 && requestFields && requestFields.length > 0) {
+      checkFieldNames = requestFields.map(f => labelToName[f] || f)
+      console.log('使用请求字段转换为英文:', checkFieldNames)
+    }
+    
+    // 如果还是没有，默认检查所有字段
+    if (checkFieldNames.length === 0) {
+      checkFieldNames = fieldDefinitions.map(f => f.name)
+      console.log('使用所有字段:', checkFieldNames)
+    }
     
     // 检查每条记录是否重复
     const checkResults = records.map((record, index) => {
-      console.log(`\n--- 检查记录 ${index} ---`)
-      console.log('record:', JSON.stringify(record, null, 2))
+      const recordData = record.data || record
       
       for (const existing of existingRecords) {
-        const duplicateFields = []
-        // 如果指定了 fields，只检查这些字段；否则检查所有字段
-        const checkFields = fields || Object.keys(record.data || record)
+        const duplicateFieldNames = [] // 存储英文字段名
         
-        console.log('existing.id:', existing.id)
-        console.log('checkFields:', checkFields)
-        console.log('existing.data:', JSON.stringify(existing.data, null, 2))
-        
-        for (const field of checkFields) {
-          const recordValue = record.data ? record.data[field] : record[field]
-          const existingValue = existing.data[field]
+        for (const fieldName of checkFieldNames) {
+          const fieldLabel = nameToLabel[fieldName] // 中文键名
           
-          console.log(`  field: ${field}, recordValue: ${recordValue}, existingValue: ${existingValue}, match: ${recordValue === existingValue}`)
+          // 优先用英文键名取数据，没有则用中文键名
+          const recordValue = recordData[fieldName] ?? recordData[fieldLabel]
+          const existingValue = existing.data[fieldName] ?? existing.data[fieldLabel]
           
           if (recordValue === existingValue && 
               recordValue !== null && 
               recordValue !== undefined && 
               recordValue !== '') {
-            duplicateFields.push(field)
+            duplicateFieldNames.push(fieldName) // 返回英文字段名
           }
         }
         
-        console.log('duplicateFields:', duplicateFields)
-        
-        if (duplicateFields.length > 0) {
+        if (duplicateFieldNames.length > 0) {
           return {
             index,
             isDuplicate: true,
-            duplicateFields,
+            duplicateFields: duplicateFieldNames, // 英文字段名
             existingRecordId: existing.id
           }
         }
