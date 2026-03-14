@@ -460,24 +460,30 @@ async function checkDuplicateFields(productId, data, env) {
     'SELECT * FROM shipping_records WHERE product_id = ?'
   ).bind(productId).all()
   
-  // 获取查重配置
-  const configResult = await env.DB.prepare(
-    'SELECT value FROM product_settings WHERE product_id = ? AND key = ?'
-  ).bind(productId, 'duplicate_check_fields').first()
-  
-  let checkFields = []
-  if (configResult && configResult.value) {
-    try {
+  // 获取查重配置（如果存在）
+  let checkFields = null
+  try {
+    const configResult = await env.DB.prepare(
+      'SELECT value FROM product_settings WHERE product_id = ? AND key = ?'
+    ).bind(productId, 'duplicate_check_fields').first()
+    
+    if (configResult && configResult.value) {
       checkFields = JSON.parse(configResult.value)
-    } catch (e) {
-      checkFields = []
     }
+  } catch (e) {
+    // 表可能不存在，忽略错误
+    console.log('获取查重配置失败，使用默认逻辑:', e.message)
   }
   
-  // 如果没有配置，检查所有字段
-  if (checkFields.length === 0) {
-    checkFields = Object.keys(data)
+  // 如果没有配置或配置为空，检查所有非空字段
+  if (!checkFields || checkFields.length === 0) {
+    checkFields = Object.keys(data).filter(key => {
+      const value = data[key]
+      return value !== null && value !== undefined && value !== ''
+    })
   }
+  
+  console.log('查重使用的字段:', checkFields)
   
   const records = (result.results || result).map(record => ({
     ...record,
@@ -515,6 +521,11 @@ async function handleCheckDuplicate(productId, request, env, headers) {
     const body = await request.json()
     const { records, fields } = body
     
+    console.log('=== handleCheckDuplicate 调试 ===')
+    console.log('productId:', productId)
+    console.log('records:', JSON.stringify(records, null, 2))
+    console.log('fields:', fields)
+    
     if (!records || !Array.isArray(records) || records.length === 0) {
       return new Response(JSON.stringify({ error: 'Missing records array' }), {
         status: 400,
@@ -532,16 +543,28 @@ async function handleCheckDuplicate(productId, request, env, headers) {
       data: record.data ? JSON.parse(record.data) : {}
     }))
     
+    console.log('existingRecords count:', existingRecords.length)
+    console.log('first existing record:', existingRecords[0] ? JSON.stringify(existingRecords[0], null, 2) : 'none')
+    
     // 检查每条记录是否重复
     const checkResults = records.map((record, index) => {
+      console.log(`\n--- 检查记录 ${index} ---`)
+      console.log('record:', JSON.stringify(record, null, 2))
+      
       for (const existing of existingRecords) {
         const duplicateFields = []
         // 如果指定了 fields，只检查这些字段；否则检查所有字段
         const checkFields = fields || Object.keys(record.data || record)
         
+        console.log('existing.id:', existing.id)
+        console.log('checkFields:', checkFields)
+        console.log('existing.data:', JSON.stringify(existing.data, null, 2))
+        
         for (const field of checkFields) {
           const recordValue = record.data ? record.data[field] : record[field]
           const existingValue = existing.data[field]
+          
+          console.log(`  field: ${field}, recordValue: ${recordValue}, existingValue: ${existingValue}, match: ${recordValue === existingValue}`)
           
           if (recordValue === existingValue && 
               recordValue !== null && 
@@ -550,6 +573,8 @@ async function handleCheckDuplicate(productId, request, env, headers) {
             duplicateFields.push(field)
           }
         }
+        
+        console.log('duplicateFields:', duplicateFields)
         
         if (duplicateFields.length > 0) {
           return {
@@ -564,6 +589,9 @@ async function handleCheckDuplicate(productId, request, env, headers) {
     })
     
     const duplicates = checkResults.filter(r => r.isDuplicate)
+    
+    console.log('=== 检查结果 ===')
+    console.log('duplicates:', JSON.stringify(duplicates, null, 2))
     
     return new Response(JSON.stringify({
       success: true,
