@@ -24,12 +24,12 @@ export async function handleRequest(request, env, ctx) {
   }
 
   try {
-    // API 接口
+    // API 接口 - 优先处理API路径
     if (path.startsWith('/api')) {
       return handleAPIRequest(request, env, url, corsHeaders)
     }
 
-    // 静态文件服务
+    // 静态文件服务 - 处理所有非API路径
     return handleStaticAsset(request, env, path, corsHeaders)
 
   } catch (error) {
@@ -144,12 +144,9 @@ async function handleAPIRequest(request, env, url, corsHeaders) {
 
 // 处理静态文件
 async function handleStaticAsset(request, env, path, corsHeaders) {
-  let assetPath = path === '/' ? '/index.html' : path
-
-  try {
-    const object = await env.ASSETS.get(assetPath.slice(1))
-
-    if (object === null) {
+  // 对于根路径，直接返回 index.html
+  if (path === '/') {
+    try {
       const indexFile = await env.ASSETS.get('index.html')
       if (indexFile) {
         return new Response(indexFile, {
@@ -159,19 +156,51 @@ async function handleStaticAsset(request, env, path, corsHeaders) {
           }
         })
       }
-      return new Response('Not Found', { status: 404, headers: corsHeaders })
+    } catch (error) {
+      console.error('Error loading index.html:', error)
     }
-
-    const headers = new Headers(corsHeaders)
-    headers.set('Content-Type', getContentType(assetPath))
-    headers.set('Cache-Control', 'public, max-age=86400')
-
-    return new Response(object, { headers })
-
-  } catch (error) {
-    console.error('Static asset error:', error)
     return new Response('Not Found', { status: 404, headers: corsHeaders })
   }
+
+  // 检查是否是静态资源文件（有文件扩展名）
+  const hasExtension = path.includes('.') && !path.endsWith('/')
+  
+  if (hasExtension) {
+    // 尝试获取静态资源文件
+    try {
+      const assetPath = path.startsWith('/') ? path.slice(1) : path
+      const object = await env.ASSETS.get(assetPath)
+
+      if (object !== null) {
+        const headers = new Headers(corsHeaders)
+        headers.set('Content-Type', getContentType(path))
+        headers.set('Cache-Control', 'public, max-age=86400')
+        return new Response(object, { headers })
+      }
+    } catch (error) {
+      console.error('Static asset error:', error)
+    }
+    
+    // 静态资源不存在，返回404
+    return new Response('Not Found', { status: 404, headers: corsHeaders })
+  }
+
+  // 对于所有其他路径（SPA路由），返回 index.html
+  try {
+    const indexFile = await env.ASSETS.get('index.html')
+    if (indexFile) {
+      return new Response(indexFile, {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'text/html; charset=utf-8'
+        }
+      })
+    }
+  } catch (error) {
+    console.error('Error loading index.html for SPA route:', error)
+  }
+
+  return new Response('Not Found', { status: 404, headers: corsHeaders })
 }
 
 function getContentType(path) {
@@ -685,14 +714,47 @@ async function handleCheckDuplicate(productId, request, env, headers) {
 }
 
 async function handleUpdateRecord(id, request, env, headers) {
-  const body = await request.json()
-  const { order_id, status, data } = body
-  await env.DB.prepare(
-    'UPDATE shipping_records SET order_id = ?, data = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-  ).bind(order_id, JSON.stringify(data), status, id).run()
-  return new Response(JSON.stringify({ success: true }), {
-    headers: { ...headers, 'Content-Type': 'application/json' }
-  })
+  try {
+    const body = await request.json()
+    console.log('Update record body:', body)
+    
+    // 从请求体中提取字段，如果没有提供则保持原值
+    const { order_id, status, data } = body
+    
+    // 如果没有提供 order_id，先获取原记录的 order_id
+    if (order_id === undefined) {
+      const existingRecord = await env.DB.prepare(
+        'SELECT order_id FROM shipping_records WHERE id = ?'
+      ).bind(id).first()
+      
+      if (!existingRecord) {
+        return new Response(JSON.stringify({ error: 'Record not found' }), {
+          status: 404,
+          headers: { ...headers, 'Content-Type': 'application/json' }
+        })
+      }
+      
+      // 只更新 data 和 status
+      await env.DB.prepare(
+        'UPDATE shipping_records SET data = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+      ).bind(JSON.stringify(data), status, id).run()
+    } else {
+      // 更新所有字段
+      await env.DB.prepare(
+        'UPDATE shipping_records SET order_id = ?, data = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+      ).bind(order_id, JSON.stringify(data), status, id).run()
+    }
+    
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { ...headers, 'Content-Type': 'application/json' }
+    })
+  } catch (error) {
+    console.error('Update record error:', error)
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: { ...headers, 'Content-Type': 'application/json' }
+    })
+  }
 }
 
 async function handleDeleteRecord(id, env, headers) {

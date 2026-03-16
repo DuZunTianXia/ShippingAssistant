@@ -11,7 +11,9 @@ import ShippingManage from './components/ShippingManage.vue'
 const routes = [
   { path: '/', component: ProductManage },
   { path: '/fields/:productId', component: FieldManage, name: 'Fields' },
-  { path: '/records/:productId', component: ShippingManage, name: 'Records' }
+  { path: '/records/:productId', component: ShippingManage, name: 'Records' },
+  // 捕获所有未匹配的路由，重定向到首页
+  { path: '/:pathMatch(.*)*', redirect: '/' }
 ]
 
 const router = createRouter({

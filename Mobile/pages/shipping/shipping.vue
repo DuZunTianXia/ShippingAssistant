@@ -1,5 +1,34 @@
 <template>
   <view class="container">
+    <!-- 搜索栏 -->
+    <view class="search-bar" v-if="records.length > 0">
+      <view class="search-field-selector">
+        <picker 
+          mode="selector" 
+          :range="searchFieldOptions"
+          range-key="label"
+          :value="searchFieldIndex"
+          @change="onSearchFieldChange"
+        >
+          <view class="search-picker">
+            <text class="search-field-text">{{ searchFieldOptions[searchFieldIndex].label }}</text>
+            <text class="picker-arrow">›</text>
+          </view>
+        </picker>
+      </view>
+      <view class="search-input-wrapper">
+        <input 
+          class="search-input" 
+          v-model="searchKeyword" 
+          :placeholder="`搜索${searchFieldOptions[searchFieldIndex].label}`"
+          @input="onSearchInput"
+        />
+        <view class="search-clear" v-if="searchKeyword" @click="clearSearch">
+          <text>×</text>
+        </view>
+      </view>
+    </view>
+
     <!-- 统计信息 -->
     <view class="stats-bar" v-if="records.length > 0">
       <view class="stat-item">
@@ -13,6 +42,10 @@
       <view class="stat-item">
         <text class="stat-label">待发货</text>
         <text class="stat-value stat-pending">{{ stats.pending }}</text>
+      </view>
+      <view class="stat-item" v-if="searchKeyword">
+        <text class="stat-label">搜索结果</text>
+        <text class="stat-value stat-search">{{ filteredRecords.length }}</text>
       </view>
     </view>
 
@@ -39,6 +72,76 @@
       >
         已发货
       </view>
+      <view class="filter-spacer"></view>
+      <!-- 多选模式切换 -->
+      <view 
+        v-if="!batchMode"
+        class="batch-toggle-btn"
+        @click="enterBatchMode"
+      >
+        <svg-icon name="checkbox" :size="24" />
+        <text>多选</text>
+      </view>
+      <view 
+        v-else
+        class="batch-toggle-btn active"
+        @click="exitBatchMode"
+      >
+        <text>取消</text>
+      </view>
+    </view>
+
+    <!-- 批量操作栏 -->
+    <view class="batch-actions" v-if="batchMode && filteredRecords.length > 0">
+      <view class="batch-left">
+        <view class="batch-btn" @click="selectAll">
+          <text>全选</text>
+        </view>
+        <view class="batch-btn" @click="selectNone">
+          <text>取消</text>
+        </view>
+        <!-- 输入指定数量选择 -->
+        <view class="quick-select-group">
+          <input 
+            class="select-input" 
+            type="number" 
+            v-model="selectCount" 
+            placeholder="数量"
+            :max="filteredRecords.length"
+            min="1"
+          />
+          <view class="batch-btn select-btn" @click="quickSelectByInput">
+            <text>选择</text>
+          </view>
+        </view>
+        <text class="selected-count" v-if="selectedRecordIds.length > 0">
+          已选 {{ selectedRecordIds.length }} 条
+        </text>
+      </view>
+      <view 
+        class="batch-copy-btn" 
+        :class="{ disabled: selectedRecordIds.length === 0 }"
+        @click="batchExportTxt"
+      >
+        <svg-icon name="file-text" :size="24" />
+        <text>导出TXT</text>
+      </view>
+    </view>
+
+    <!-- 附加信息栏（非批量模式） -->
+    <view class="attach-bar" v-if="!batchMode && records.length > 0">
+      <view class="attach-left" @click="showAttachModal = true">
+        <svg-icon name="edit" :size="24" />
+        <text class="attach-text" :class="{ empty: !attachmentText }">
+          {{ attachmentText ? '已设置附加信息' : '添加附加信息' }}
+        </text>
+      </view>
+      <view class="attach-toggle" @click.stop="attachEnabled = !attachEnabled">
+        <view class="attach-checkbox" :class="{ checked: attachEnabled }">
+          <text v-if="attachEnabled">✓</text>
+        </view>
+        <text class="attach-label">追加</text>
+      </view>
     </view>
 
     <!-- 加载状态 -->
@@ -62,10 +165,23 @@
         class="record-card" 
         v-for="(record, index) in filteredRecords" 
         :key="record.id"
-        :class="{ 'shipped': record.status === 'shipped' }"
+        :class="{ 
+          'shipped': record.status === 'shipped',
+          'selected': isSelected(record.id)
+        }"
+        @click="onCardClick(record)"
       >
         <view class="record-header">
           <view class="record-meta">
+            <!-- 复选框 -->
+            <view 
+              v-if="batchMode"
+              class="record-checkbox"
+              :class="{ checked: isSelected(record.id) }"
+              @click.stop="toggleSelection(record.id)"
+            >
+              <text v-if="isSelected(record.id)">✓</text>
+            </view>
             <text class="record-index">#{{ index + 1 }}</text>
             <text class="record-date">{{ formatDate(record.created_at) }}</text>
           </view>
@@ -93,23 +209,27 @@
         </view>
 
         <view class="record-actions">
-          <view class="action-btn copy" @click="copyRecord(record)">
+          <view class="action-btn copy" @click.stop="copyRecord(record)">
             <svg-icon name="copy" :size="28" />
             <text class="btn-text">复制</text>
+          </view>
+          <view class="action-btn export" @click.stop="exportRecordToTxt(record)">
+            <svg-icon name="file-text" :size="28" />
+            <text class="btn-text">导出</text>
           </view>
           <view 
             class="action-btn quick-ship" 
             v-if="record.status === 'pending'"
-            @click="quickShip(record.id)"
+            @click.stop="quickShip(record.id)"
           >
             <svg-icon name="quick-ship" :size="32" />
             <text class="btn-text">发货</text>
           </view>
-          <view class="action-btn edit" @click="editRecord(record)">
+          <view class="action-btn edit" @click.stop="editRecord(record)">
             <svg-icon name="edit" :size="32" />
             <text class="btn-text">编辑</text>
           </view>
-          <view class="action-btn delete" @click="deleteRecord(record.id)">
+          <view class="action-btn delete" @click.stop="deleteRecord(record.id)">
             <svg-icon name="delete" :size="32" />
             <text class="btn-text">删除</text>
           </view>
@@ -196,6 +316,29 @@
         </view>
       </view>
     </view>
+
+    <!-- 附加信息输入弹窗 -->
+    <view v-if="showAttachModal" class="modal-mask" @click="showAttachModal = false">
+      <view class="modal" @click.stop>
+        <view class="modal-header">
+          <text class="modal-title">附加信息</text>
+          <text class="modal-close" @click="showAttachModal = false">×</text>
+        </view>
+        <view class="modal-body">
+          <textarea
+            class="form-textarea"
+            v-model="attachmentText"
+            placeholder="请输入附加信息（复制时会追加到内容后面）"
+            maxlength="500"
+          />
+          <text class="char-count">{{ attachmentText.length }}/500</text>
+        </view>
+        <view class="modal-footer">
+          <view class="btn btn-secondary" @click="showAttachModal = false">取消</view>
+          <view class="btn btn-primary" @click="saveAttachment">保存</view>
+        </view>
+      </view>
+    </view>
   </view>
 </template>
 
@@ -216,7 +359,7 @@ export default {
       copyFieldIds: [],
       showAddModal: false,
       editMode: false,
-      statusFilter: 'all',
+      statusFilter: 'pending',
       maxDisplayFields: 3,
       loading: false,
       stats: { total: 0, shipped: 0, pending: 0 },
@@ -224,7 +367,20 @@ export default {
         id: null,
         data: {},
         status: 'pending'
-      }
+      },
+      // 多选复制相关
+      selectedRecordIds: [],
+      batchMode: false,
+      selectCount: '', // 输入的选择数量
+      // 搜索相关
+      searchKeyword: '',
+      searchFieldIndex: 0,
+      // 批量发货加载状态
+      batchShippingLoading: false,
+      // 附加信息相关
+      attachmentText: '',
+      attachEnabled: false,
+      showAttachModal: false
     }
   },
 
@@ -240,12 +396,47 @@ export default {
     hasMoreFields() {
       return this.fieldList.length > this.maxDisplayFields
     },
+    // 搜索字段选项
+    searchFieldOptions() {
+      const options = [{ label: '全部字段', value: 'all' }]
+      this.fieldList.forEach(field => {
+        options.push({
+          label: field.label || field.name,
+          value: field.name
+        })
+      })
+      return options
+    },
     // 筛选后的记录
     filteredRecords() {
-      if (this.statusFilter === 'all') {
-        return this.records
+      let records = this.records
+      
+      // 状态筛选
+      if (this.statusFilter !== 'all') {
+        records = records.filter(r => r.status === this.statusFilter)
       }
-      return this.records.filter(r => r.status === this.statusFilter)
+      
+      // 搜索筛选
+      if (this.searchKeyword) {
+        const keyword = this.searchKeyword.toLowerCase()
+        const searchField = this.searchFieldOptions[this.searchFieldIndex].value
+        
+        records = records.filter(record => {
+          if (searchField === 'all') {
+            // 搜索所有字段
+            return this.fieldList.some(field => {
+              const value = this.getFieldValue(record, field) || ''
+              return value.toString().toLowerCase().includes(keyword)
+            })
+          } else {
+            // 搜索指定字段
+            const value = this.getFieldValue(record, { name: searchField }) || ''
+            return value.toString().toLowerCase().includes(keyword)
+          }
+        })
+      }
+      
+      return records
     }
   },
 
@@ -322,6 +513,15 @@ export default {
     loadCopyConfig() {
       const config = uni.getStorageSync(`copy_fields_${this.productId}`)
       this.copyFieldIds = config ? JSON.parse(config) : this.fields.map(f => f.id)
+      // 加载本地存储的附加信息
+      const attachText = uni.getStorageSync(`attachment_${this.productId}`)
+      if (attachText) {
+        this.attachmentText = attachText
+      }
+      const attachEnabled = uni.getStorageSync(`attach_enabled_${this.productId}`)
+      if (attachEnabled !== '') {
+        this.attachEnabled = attachEnabled === 'true' || attachEnabled === true
+      }
     },
 
     formatDate(dateStr) {
@@ -366,12 +566,53 @@ export default {
         const value = this.getFieldValue(record, field) || ''
         lines.push(`${field.label || field.name}: ${value}`)
       })
+      
+      // 如果启用附加信息，追加到内容后面
+      if (this.attachEnabled && this.attachmentText) {
+        lines.push('')
+        lines.push(this.attachmentText)
+      }
+      
       const text = lines.join('\n')
       
       uni.setClipboardData({
         data: text,
         success: () => {
-          uni.showToast({ title: '复制成功', icon: 'success' })
+          // 延迟执行，避免与系统提示冲突
+          setTimeout(() => {
+            uni.hideToast()
+            
+            // 如果待发货，询问是否标记为已发货
+            if (record.status === 'pending') {
+              uni.showModal({
+                title: '是否标记为已发货？',
+                content: '复制成功，是否将此订单标记为已发货？',
+                confirmColor: '#10B981',
+                confirmText: '标记发货',
+                cancelText: '取消',
+                success: async (res) => {
+                  if (res.confirm) {
+                    // 显示加载提示
+                    uni.showLoading({ title: '标记中...' })
+                    try {
+                      await updateRecord(record.id, {
+                        ...record,
+                        status: 'shipped'
+                      })
+                      uni.hideLoading()
+                      uni.showToast({ title: '已发货', icon: 'success' })
+                      this.loadData()
+                    } catch (error) {
+                      uni.hideLoading()
+                      uni.showToast({ title: '标记发货失败', icon: 'none' })
+                    }
+                  }
+                }
+              })
+            } else {
+              uni.showToast({ title: '复制成功', icon: 'success' })
+            }
+          }, 800)
         }
       })
     },
@@ -382,15 +623,19 @@ export default {
         content: '确定标记此订单为已发货？',
         success: async (res) => {
           if (res.confirm) {
+            // 显示加载提示
+            uni.showLoading({ title: '标记中...' })
             try {
               const record = this.records.find(r => r.id === id)
               await updateRecord(id, {
                 ...record,
                 status: 'shipped'
               })
+              uni.hideLoading()
               uni.showToast({ title: '发货成功', icon: 'success' })
               this.loadRecords()
             } catch (error) {
+              uni.hideLoading()
               uni.showToast({ title: '操作失败', icon: 'none' })
             }
           }
@@ -463,6 +708,356 @@ export default {
           }
         }
       })
+    },
+
+    // 多选相关方法
+    enterBatchMode() {
+      this.batchMode = true
+      this.selectedRecordIds = []
+      this.selectCount = '' // 清空输入框
+    },
+
+    exitBatchMode() {
+      this.batchMode = false
+      this.selectedRecordIds = []
+      this.selectCount = '' // 清空输入框
+    },
+
+    isSelected(id) {
+      return this.selectedRecordIds.includes(id)
+    },
+
+    toggleSelection(id) {
+      const index = this.selectedRecordIds.indexOf(id)
+      if (index > -1) {
+        this.selectedRecordIds.splice(index, 1)
+      } else {
+        this.selectedRecordIds.push(id)
+      }
+    },
+
+    onCardClick(record) {
+      if (this.batchMode) {
+        this.toggleSelection(record.id)
+      }
+    },
+
+    selectAll() {
+      this.selectedRecordIds = this.filteredRecords.map(r => r.id)
+    },
+
+    selectNone() {
+      this.selectedRecordIds = []
+    },
+
+    quickSelect(count) {
+      // 快速选择指定数量的记录（从当前筛选结果的前N条开始选择）
+      this.selectedRecordIds = this.filteredRecords.slice(0, count).map(r => r.id)
+    },
+
+    quickSelectByInput() {
+      const count = parseInt(this.selectCount)
+      if (!count || count <= 0) {
+        uni.showToast({ title: '请输入有效数量', icon: 'none' })
+        return
+      }
+      if (count > this.filteredRecords.length) {
+        uni.showToast({ title: `最多只能选择${this.filteredRecords.length}条`, icon: 'none' })
+        return
+      }
+      // 选择前N条记录
+      this.selectedRecordIds = this.filteredRecords.slice(0, count).map(r => r.id)
+      uni.showToast({ title: `已选择${count}条记录`, icon: 'success' })
+    },
+
+    // 搜索相关方法
+    onSearchFieldChange(e) {
+      this.searchFieldIndex = e.detail.value
+      // 如果有搜索关键词，重新执行搜索
+      if (this.searchKeyword) {
+        this.onSearchInput()
+      }
+    },
+
+    onSearchInput() {
+      // 搜索时自动退出批量模式
+      if (this.batchMode) {
+        this.exitBatchMode()
+      }
+    },
+
+    clearSearch() {
+      this.searchKeyword = ''
+      this.searchFieldIndex = 0
+    },
+
+    batchCopy() {
+      if (this.selectedRecordIds.length === 0) {
+        uni.showToast({ title: '请先选择记录', icon: 'none' })
+        return
+      }
+
+      const selectedRecords = this.records.filter(r => this.selectedRecordIds.includes(r.id))
+      const allLines = []
+
+      selectedRecords.forEach((record, index) => {
+        if (index > 0) {
+          allLines.push('') // 记录之间用空行分隔
+        }
+        
+        allLines.push(`--- 记录 #${index + 1} ---`)
+        this.fieldList.forEach(field => {
+          const value = this.getFieldValue(record, field) || ''
+          allLines.push(`${field.label || field.name}: ${value}`)
+        })
+      })
+
+      // 如果启用附加信息，追加到内容后面
+      if (this.attachEnabled && this.attachmentText) {
+        allLines.push('')
+        allLines.push(this.attachmentText)
+      }
+
+      const text = allLines.join('\n')
+
+      uni.setClipboardData({
+        data: text,
+        success: () => {
+          // 延迟执行，避免与系统提示冲突
+          setTimeout(() => {
+            // 隐藏系统默认提示
+            uni.hideToast()
+            
+            // 检查是否有待发货记录
+            const pendingRecords = selectedRecords.filter(r => r.status === 'pending')
+            
+            if (pendingRecords.length > 0) {
+              // 有未发货记录，显示确认对话框
+              uni.showModal({
+                title: '是否标记为已发货？',
+                content: `复制的 ${selectedRecords.length} 条记录中有 ${pendingRecords.length} 条待发货，是否标记为已发货？`,
+                confirmColor: '#10B981',
+                confirmText: '标记发货',
+                cancelText: '取消',
+                success: async (res) => {
+                  if (res.confirm) {
+                    await this.batchMarkShipped(pendingRecords)
+                  }
+                }
+              })
+            } else {
+              // 没有待发货记录，只显示复制成功
+              uni.showToast({ 
+                title: `已复制 ${selectedRecords.length} 条`, 
+                icon: 'success' 
+              })
+              setTimeout(() => {
+                this.exitBatchMode()
+              }, 1000)
+            }
+          }, 800)
+        }
+      })
+    },
+
+    // 批量标记发货
+    async batchMarkShipped(pendingRecords) {
+      if (this.batchShippingLoading) return // 防止重复操作
+      
+      this.batchShippingLoading = true
+      let successCount = 0
+      let failCount = 0
+      
+      // 显示进度提示
+      uni.showLoading({ 
+        title: `标记中 0/${pendingRecords.length}`,
+        mask: true 
+      })
+      
+      try {
+        for (let i = 0; i < pendingRecords.length; i++) {
+          const record = pendingRecords[i]
+          try {
+            await updateRecord(record.id, {
+              ...record,
+              status: 'shipped'
+            })
+            successCount++
+            
+            // 更新进度
+            uni.showLoading({ 
+              title: `标记中 ${successCount + failCount}/${pendingRecords.length}`,
+              mask: true 
+            })
+          } catch (error) {
+            failCount++
+            console.error(`标记记录 ${record.id} 失败:`, error)
+          }
+        }
+        
+        uni.hideLoading()
+        
+        // 显示结果
+        if (failCount === 0) {
+          uni.showToast({ 
+            title: `已发货 ${successCount} 条`, 
+            icon: 'success' 
+          })
+        } else {
+          uni.showModal({
+            title: '批量发货完成',
+            content: `成功: ${successCount} 条\n失败: ${failCount} 条`,
+            showCancel: false,
+            confirmText: '知道了'
+          })
+        }
+        
+        this.loadData()
+        this.exitBatchMode()
+        
+      } catch (error) {
+        uni.hideLoading()
+        uni.showToast({ title: '批量发货失败', icon: 'none' })
+      } finally {
+        this.batchShippingLoading = false
+      }
+    },
+
+    // 保存附加信息到本地
+    saveAttachment() {
+      uni.setStorageSync(`attachment_${this.productId}`, this.attachmentText)
+      uni.setStorageSync(`attach_enabled_${this.productId}`, this.attachEnabled.toString())
+      this.showAttachModal = false
+      uni.showToast({ title: '已保存', icon: 'success' })
+    },
+
+    // 单个记录导出为TXT
+    exportRecordToTxt(record) {
+      const lines = []
+      
+      this.fieldList.forEach(field => {
+        const value = this.getFieldValue(record, field) || ''
+        lines.push(`${field.label || field.name}: ${value}`)
+      })
+      
+      // 如果启用附加信息，追加到内容后面
+      if (this.attachEnabled && this.attachmentText) {
+        lines.push('')
+        lines.push(this.attachmentText)
+      }
+      
+      const content = lines.join('\n')
+      const fileName = `record_${record.id}_${Date.now()}.txt`
+      
+      this.saveTxtFile(content, fileName)
+    },
+
+    // 批量导出为TXT
+    batchExportTxt() {
+      if (this.selectedRecordIds.length === 0) {
+        uni.showToast({ title: '请先选择记录', icon: 'none' })
+        return
+      }
+
+      const selectedRecords = this.records.filter(r => this.selectedRecordIds.includes(r.id))
+      const lines = []
+
+      selectedRecords.forEach((record, index) => {
+        if (index > 0) {
+          lines.push('') // 记录之间用空行分隔
+        }
+        
+        lines.push(`--- 记录 #${index + 1} ---`)
+        this.fieldList.forEach(field => {
+          const value = this.getFieldValue(record, field) || ''
+          lines.push(`${field.label || field.name}: ${value}`)
+        })
+      })
+
+      // 如果启用附加信息，追加到内容后面
+      if (this.attachEnabled && this.attachmentText) {
+        lines.push('')
+        lines.push(this.attachmentText)
+      }
+
+      const content = lines.join('\n')
+      const fileName = `batch_export_${this.productName}_${Date.now()}.txt`
+      
+      this.saveTxtFile(content, fileName)
+      
+      // 询问是否标记为已发货
+      const pendingRecords = selectedRecords.filter(r => r.status === 'pending')
+      if (pendingRecords.length > 0) {
+        setTimeout(() => {
+          uni.showModal({
+            title: '是否标记为已发货？',
+            content: `导出的 ${selectedRecords.length} 条记录中有 ${pendingRecords.length} 条待发货，是否标记为已发货？`,
+            confirmColor: '#10B981',
+            confirmText: '标记发货',
+            cancelText: '取消',
+            success: async (res) => {
+              if (res.confirm) {
+                await this.batchMarkShipped(pendingRecords)
+              }
+            }
+          })
+        }, 800)
+      } else {
+        setTimeout(() => {
+          this.exitBatchMode()
+        }, 1000)
+      }
+    },
+
+    // 保存TXT文件 - 使用剪贴板作为最可靠的跨平台方案
+    saveTxtFile(content, fileName) {
+      uni.setClipboardData({
+        data: content,
+        success: () => {
+          uni.showModal({
+            title: '导出成功',
+            content: `内容已复制到剪贴板，文件名参考：${fileName}\n\n请粘贴到文本编辑器中保存为 .txt 文件`,
+            showCancel: false,
+            confirmText: '知道了'
+          })
+        },
+        fail: () => {
+          uni.showToast({ title: '导出失败', icon: 'none' })
+        }
+      })
+    },
+
+    // 打开或复制TXT
+    openOrCopyTxt(filePath, content) {
+      uni.openDocument({
+        filePath: filePath,
+        fileType: 'txt',
+        showMenu: true,
+        success: () => {
+          uni.showToast({ title: '导出成功', icon: 'success' })
+        },
+        fail: () => {
+          this.copyToClipboard(content)
+        }
+      })
+    },
+
+    // 复制到剪贴板
+    copyToClipboard(content) {
+      uni.setClipboardData({
+        data: content,
+        success: () => {
+          uni.showModal({
+            title: '内容已复制',
+            content: '请手动粘贴内容保存为TXT文件',
+            showCancel: false,
+            confirmText: '知道了'
+          })
+        },
+        fail: () => {
+          uni.showToast({ title: '导出失败', icon: 'none' })
+        }
+      })
     }
   }
 }
@@ -472,6 +1067,72 @@ export default {
 .container {
   min-height: 100vh;
   background-color: #EFF6FF;
+}
+
+/* 搜索栏 */
+.search-bar {
+  display: flex;
+  padding: 16rpx 24rpx;
+  background: #fff;
+  border-bottom: 1rpx solid #E2E8F0;
+  gap: 12rpx;
+}
+
+.search-field-selector {
+  flex-shrink: 0;
+}
+
+.search-picker {
+  height: 64rpx;
+  background: #F1F5F9;
+  border-radius: 8rpx;
+  padding: 0 16rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 120rpx;
+}
+
+.search-field-text {
+  font-size: 24rpx;
+  color: #334155;
+}
+
+.search-input-wrapper {
+  flex: 1;
+  position: relative;
+}
+
+.search-input {
+  height: 64rpx;
+  background: #F1F5F9;
+  border-radius: 8rpx;
+  padding: 0 16rpx;
+  padding-right: 60rpx;
+  font-size: 26rpx;
+  color: #334155;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.search-clear {
+  position: absolute;
+  right: 16rpx;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32rpx;
+  height: 32rpx;
+  background: #CBD5E1;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.search-clear text {
+  color: #fff;
+  font-size: 24rpx;
+  line-height: 1;
 }
 
 /* 统计信息栏 */
@@ -513,6 +1174,10 @@ export default {
   color: #F59E0B;
 }
 
+.stat-search {
+  color: #2563EB;
+}
+
 /* 状态筛选栏 */
 .status-filter {
   display: flex;
@@ -534,6 +1199,168 @@ export default {
 .filter-tab.active {
   background: #2563EB;
   color: #fff;
+}
+
+.filter-spacer {
+  flex: 1;
+}
+
+/* 多选切换按钮 */
+.batch-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  font-size: 24rpx;
+  color: #2563EB;
+  padding: 8rpx 16rpx;
+  border-radius: 8rpx;
+  background: #EFF6FF;
+}
+
+.batch-toggle-btn.active {
+  background: #FEE2E2;
+  color: #EF4444;
+}
+
+/* 批量操作栏 */
+.batch-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16rpx 24rpx;
+  background: #fff;
+  border-bottom: 1rpx solid #E2E8F0;
+}
+
+.batch-left {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.batch-btn {
+  font-size: 22rpx;
+  padding: 6rpx 16rpx;
+  background: #F1F5F9;
+  color: #64748B;
+  border-radius: 6rpx;
+  white-space: nowrap;
+}
+
+.quick-select-group {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.select-input {
+  width: 80rpx;
+  height: 56rpx;
+  background: #fff;
+  border: 1rpx solid #E2E8F0;
+  border-radius: 6rpx;
+  padding: 0 12rpx;
+  font-size: 22rpx;
+  text-align: center;
+}
+
+.select-btn {
+  background: #EFF6FF;
+  color: #2563EB;
+}
+
+.selected-count {
+  font-size: 24rpx;
+  color: #2563EB;
+  font-weight: 500;
+  margin-left: 8rpx;
+}
+
+.batch-copy-btn {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  font-size: 24rpx;
+  padding: 10rpx 24rpx;
+  background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+  color: #fff;
+  border-radius: 8rpx;
+}
+
+.batch-copy-btn.disabled {
+  background: #CBD5E1;
+  color: #94A3B8;
+}
+
+/* 附加信息栏 */
+.attach-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16rpx 24rpx;
+  background: #fff;
+  border-bottom: 1rpx solid #E2E8F0;
+}
+
+.attach-left {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  flex: 1;
+}
+
+.attach-text {
+  font-size: 26rpx;
+  color: #334155;
+}
+
+.attach-text.empty {
+  color: #94A3B8;
+}
+
+.attach-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 8rpx 16rpx;
+  background: #F1F5F9;
+  border-radius: 8rpx;
+}
+
+.attach-checkbox {
+  width: 36rpx;
+  height: 36rpx;
+  border: 2rpx solid #CBD5E1;
+  border-radius: 6rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.attach-checkbox.checked {
+  background: #2563EB;
+  border-color: #2563EB;
+}
+
+.attach-checkbox text {
+  color: #fff;
+  font-size: 20rpx;
+  font-weight: bold;
+}
+
+.attach-label {
+  font-size: 24rpx;
+  color: #64748B;
+}
+
+/* 字符计数 */
+.char-count {
+  font-size: 24rpx;
+  color: #94A3B8;
+  text-align: right;
+  margin-top: 12rpx;
 }
 
 .empty-state {
@@ -601,6 +1428,36 @@ export default {
 
 .record-card.shipped {
   border-left-color: #10B981;
+}
+
+.record-card.selected {
+  background: #EFF6FF;
+  border-left-color: #2563EB;
+  box-shadow: 0 4rpx 16rpx rgba(37, 99, 235, 0.15);
+}
+
+/* 复选框样式 */
+.record-checkbox {
+  width: 40rpx;
+  height: 40rpx;
+  border: 2rpx solid #CBD5E1;
+  border-radius: 8rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 12rpx;
+  flex-shrink: 0;
+}
+
+.record-checkbox.checked {
+  background: #2563EB;
+  border-color: #2563EB;
+}
+
+.record-checkbox text {
+  color: #fff;
+  font-size: 24rpx;
+  font-weight: bold;
 }
 
 .record-header {
@@ -727,6 +1584,10 @@ export default {
 
 .action-btn.quick-ship .btn-text {
   color: #2563EB;
+}
+
+.action-btn.export .btn-text {
+  color: #10B981;
 }
 
 .fab-btn {

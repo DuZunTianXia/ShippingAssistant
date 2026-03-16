@@ -2,8 +2,14 @@
   <view class="container">
     <!-- 页面内容 -->
     <scroll-view class="page-content" scroll-y>
+      <!-- 加载状态 -->
+      <view v-if="loading" class="loading-state">
+        <view class="loading-spinner"></view>
+        <text class="loading-text">加载中...</text>
+      </view>
+
       <!-- 空状态 -->
-      <view v-if="products.length === 0" class="empty-state">
+      <view v-else-if="products.length === 0" class="empty-state">
         <image class="empty-icon" src="/static/empty-box.png" mode="aspectFit"></image>
         <text class="empty-title">还没有商品</text>
         <text class="empty-desc">点击添加按钮创建你的第一个商品</text>
@@ -24,6 +30,22 @@
             <view class="product-info">
               <text class="product-name">{{ product.name }}</text>
               <text class="product-desc">{{ product.description || '暂无描述' }}</text>
+            </view>
+          </view>
+
+          <!-- 统计信息 -->
+          <view class="product-stats" v-if="product.stats">
+            <view class="stat-item">
+              <text class="stat-label">总计</text>
+              <text class="stat-value stat-total">{{ product.stats.total || 0 }}</text>
+            </view>
+            <view class="stat-item">
+              <text class="stat-label">已发货</text>
+              <text class="stat-value stat-shipped">{{ product.stats.shipped || 0 }}</text>
+            </view>
+            <view class="stat-item">
+              <text class="stat-label">待发货</text>
+              <text class="stat-value stat-pending">{{ product.stats.pending || 0 }}</text>
             </view>
           </view>
 
@@ -96,7 +118,7 @@
 </template>
 
 <script>
-import { getProducts, createProduct, updateProduct, deleteProduct } from '@/utils/api.js'
+import { getProducts, createProduct, updateProduct, deleteProduct, getRecordStats } from '@/utils/api.js'
 import SvgIcon from '@/components/SvgIcon.vue'
 
 export default {
@@ -108,6 +130,7 @@ export default {
       products: [],
       showAddModal: false,
       editMode: false,
+      loading: false,
       productForm: {
         id: null,
         name: '',
@@ -126,14 +149,31 @@ export default {
 
   methods: {
     async loadProducts() {
+      this.loading = true
       try {
         const data = await getProducts()
-        this.products = data
+        // 为每个商品加载统计数据
+        const productsWithStats = await Promise.all(
+          data.map(async (product) => {
+            try {
+              const statsData = await getRecordStats(product.id)
+              return {
+                ...product,
+                stats: statsData.success ? statsData.stats : null
+              }
+            } catch (error) {
+              return { ...product, stats: null }
+            }
+          })
+        )
+        this.products = productsWithStats
       } catch (error) {
         uni.showToast({
           title: '加载失败',
           icon: 'none'
         })
+      } finally {
+        this.loading = false
       }
     },
 
@@ -234,6 +274,36 @@ export default {
   box-sizing: border-box;
 }
 
+/* 加载状态 */
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 200rpx 40rpx;
+}
+
+.loading-spinner {
+  width: 60rpx;
+  height: 60rpx;
+  border: 4rpx solid #E2E8F0;
+  border-top-color: #2563EB;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 20rpx;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-text {
+  font-size: 28rpx;
+  color: #64748B;
+}
+
 /* 空状态 */
 .empty-state {
   display: flex;
@@ -323,7 +393,7 @@ export default {
 }
 
 .product-meta {
-  margin-bottom: 24rpx;
+  margin-bottom: 20rpx;
 }
 
 .meta-text {
@@ -358,6 +428,46 @@ export default {
 
 .action-btn.delete .btn-text {
   color: #ef4444;
+}
+
+/* 统计信息 */
+.product-stats {
+  display: flex;
+  justify-content: space-around;
+  padding: 16rpx 0;
+  margin-bottom: 16rpx;
+  background: linear-gradient(135deg, #f8fafc 0%, #fff 100%);
+  border-radius: 16rpx;
+  border: 1rpx solid #E2E8F0;
+}
+
+.product-stats .stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4rpx;
+}
+
+.product-stats .stat-label {
+  font-size: 22rpx;
+  color: #64748B;
+}
+
+.product-stats .stat-value {
+  font-size: 32rpx;
+  font-weight: 700;
+}
+
+.product-stats .stat-total {
+  color: #1E293B;
+}
+
+.product-stats .stat-shipped {
+  color: #10B981;
+}
+
+.product-stats .stat-pending {
+  color: #F59E0B;
 }
 
 .fab-btn {
