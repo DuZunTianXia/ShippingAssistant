@@ -157,9 +157,10 @@
           </select>
         </div>
         <div class="search-input-wrapper">
-          <input 
-            v-model="searchKeyword" 
-            type="text" 
+          <input
+            v-model="searchKeyword"
+            @input="handleSearch"
+            type="text"
             :placeholder="`搜索${searchFieldOptions[searchFieldIndex].label}`"
             class="search-input"
           />
@@ -194,24 +195,24 @@
       <!-- 状态筛选和批量操作栏 -->
       <div class="filter-actions-bar" v-if="records.length > 0">
         <div class="status-filters">
-          <button 
-            class="filter-btn" 
+          <button
+            class="filter-btn"
             :class="{ active: statusFilter === 'all' }"
-            @click="statusFilter = 'all'"
+            @click="handleStatusFilterChange('all')"
           >
             全部
           </button>
-          <button 
-            class="filter-btn" 
+          <button
+            class="filter-btn"
             :class="{ active: statusFilter === 'pending' }"
-            @click="statusFilter = 'pending'"
+            @click="handleStatusFilterChange('pending')"
           >
             待发货
           </button>
-          <button 
-            class="filter-btn" 
+          <button
+            class="filter-btn"
             :class="{ active: statusFilter === 'shipped' }"
-            @click="statusFilter = 'shipped'"
+            @click="handleStatusFilterChange('shipped')"
           >
             已发货
           </button>
@@ -376,6 +377,45 @@
               </tr>
             </tbody>
           </table>
+
+          <!-- 分页控件 -->
+          <div class="pagination-wrapper" v-if="pagination.totalPages > 1">
+            <div class="pagination-info">
+              共 {{ pagination.total }} 条，第 {{ currentPage }}/{{ pagination.totalPages }} 页
+            </div>
+            <div class="pagination-controls">
+              <button
+                class="page-btn"
+                :disabled="currentPage <= 1"
+                @click="handlePageChange(currentPage - 1)"
+              >
+                上一页
+              </button>
+              <button
+                v-for="page in visiblePages"
+                :key="page"
+                class="page-btn"
+                :class="{ active: page === currentPage, ellipsis: page === '...' }"
+                :disabled="page === '...'"
+                @click="page !== '...' && handlePageChange(page)"
+              >
+                {{ page }}
+              </button>
+              <button
+                class="page-btn"
+                :disabled="currentPage >= pagination.totalPages"
+                @click="handlePageChange(currentPage + 1)"
+              >
+                下一页
+              </button>
+              <select v-model="pageSize" @change="handleSizeChange(pageSize)" class="page-size-select">
+                <option :value="10">10条/页</option>
+                <option :value="20">20条/页</option>
+                <option :value="50">50条/页</option>
+                <option :value="100">100条/页</option>
+              </select>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -507,9 +547,16 @@ const stats = ref({ total: 0, shipped: 0, pending: 0 })
 // 搜索相关
 const searchKeyword = ref('')
 const searchFieldIndex = ref(0)
+const debouncedSearch = ref('') // 防抖后的搜索词
+let searchTimer = null
 
 // 状态筛选
 const statusFilter = ref('all')
+
+// 分页相关
+const currentPage = ref(1)
+const pageSize = ref(20)
+const pagination = ref({ total: 0, totalPages: 0 })
 
 // 批量操作相关
 const batchMode = ref(false)
@@ -593,10 +640,33 @@ const hiddenFieldsCount = computed(() => {
   return fields.value.length - displayFields.value.length
 })
 
+// 计算显示的页码（带省略号）
+const visiblePages = computed(() => {
+  const total = pagination.value.totalPages || 1
+  const current = currentPage.value
+  const pages = []
+
+  if (total <= 7) {
+    for (let i = 1; i <= total; i++) pages.push(i)
+  } else {
+    pages.push(1)
+    if (current > 3) pages.push('...')
+    for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++) {
+      pages.push(i)
+    }
+    if (current < total - 2) pages.push('...')
+    pages.push(total)
+  }
+
+  return pages
+})
+
 const fetchFields = async () => {
   try {
     const response = await axios.get(`/api/products/${productId.value}/fields`)
-    fields.value = response.data.sort((a, b) => a.sort_order - b.sort_order)
+    // 处理新的分页响应格式
+    const fieldsData = response.data.items || response.data
+    fields.value = fieldsData.sort((a, b) => a.sort_order - b.sort_order)
   } catch (error) {
     ElMessage.error('获取字段列表失败')
   }
@@ -604,13 +674,78 @@ const fetchFields = async () => {
 
 const fetchRecords = async () => {
   try {
-    const response = await axios.get(`/api/products/${productId.value}/records`)
-    records.value = response.data
+    // 构建查询参数
+    const params = new URLSearchParams({
+      page: currentPage.value,
+      pageSize: pageSize.value
+    })
+
+    // 添加搜索词（使用防抖后的值）
+    if (debouncedSearch.value) {
+      params.append('search', debouncedSearch.value)
+    }
+
+    // 添加状态筛选
+    if (statusFilter.value !== 'all') {
+      params.append('status', statusFilter.value)
+    }
+
+    const response = await axios.get(`/api/products/${productId.value}/records?${params}`)
+    const data = response.data
+
+    // 处理新的分页响应格式
+    if (data.items && data.pagination) {
+      records.value = data.items
+      pagination.value = data.pagination
+    } else {
+      // 兼容旧的非分页格式
+      records.value = Array.isArray(data) ? data : []
+      pagination.value = { total: records.value.length, totalPages: 1 }
+    }
+
     // 同时获取统计信息
     fetchStats()
   } catch (error) {
     ElMessage.error('获取记录列表失败')
   }
+}
+
+// 防抖搜索
+const handleSearch = () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    debouncedSearch.value = searchKeyword.value
+    currentPage.value = 1 // 搜索时重置到第一页
+    fetchRecords()
+  }, 300)
+}
+
+// 清除搜索
+const clearSearch = () => {
+  searchKeyword.value = ''
+  debouncedSearch.value = ''
+  currentPage.value = 1
+  fetchRecords()
+}
+
+// 状态筛选变化时重新获取
+const handleStatusFilterChange = (status) => {
+  statusFilter.value = status
+  currentPage.value = 1
+  fetchRecords()
+}
+
+// 翻页
+const handlePageChange = (page) => {
+  currentPage.value = page
+  fetchRecords()
+}
+
+// 每页条数变化
+const handleSizeChange = (size) => {
+  pageSize.value = size
+  currentPage.value = 1
+  fetchRecords()
 }
 
 const fetchStats = async () => {
@@ -890,12 +1025,6 @@ const isDuplicateFieldChecked = (fieldName) => {
   return duplicateCheckFields.value.includes(fieldName)
 }
 
-// 搜索相关方法
-const clearSearch = () => {
-  searchKeyword.value = ''
-  searchFieldIndex.value = 0
-}
-
 // 批量操作相关方法
 const enterBatchMode = () => {
   batchMode.value = true
@@ -959,7 +1088,18 @@ const batchCopy = async () => {
     return
   }
 
-  const selectedRecords = records.value.filter(r => selectedRecordIds.value.includes(r.id))
+  // 通过批量API获取完整的选中记录（支持跨页选择）
+  let selectedRecords
+  try {
+    const response = await axios.post(`/api/products/${productId.value}/records/batch`, {
+      ids: selectedRecordIds.value
+    })
+    selectedRecords = response.data.items || []
+  } catch (error) {
+    // 如果批量接口失败，尝试用本地数据
+    selectedRecords = records.value.filter(r => selectedRecordIds.value.includes(r.id))
+  }
+
   const allLines = []
 
   selectedRecords.forEach((record, index) => {
@@ -1019,7 +1159,18 @@ const batchExportTxt = async () => {
     return
   }
 
-  const selectedRecords = records.value.filter(r => selectedRecordIds.value.includes(r.id))
+  // 通过批量API获取完整的选中记录（支持跨页选择）
+  let selectedRecords
+  try {
+    const response = await axios.post(`/api/products/${productId.value}/records/batch`, {
+      ids: selectedRecordIds.value
+    })
+    selectedRecords = response.data.items || []
+  } catch (error) {
+    // 如果批量接口失败，尝试用本地数据
+    selectedRecords = records.value.filter(r => selectedRecordIds.value.includes(r.id))
+  }
+
   const lines = []
 
   selectedRecords.forEach((record, index) => {
@@ -2149,5 +2300,83 @@ onMounted(() => {
   .dialog-footer .btn {
     width: 100%;
   }
+}
+
+/* 分页控件样式 */
+.pagination-wrapper {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-card);
+}
+
+.pagination-info {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.page-btn {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  min-width: 32px;
+  height: 32px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.page-btn:hover:not(:disabled) {
+  background: var(--color-primary-light);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.page-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.page-btn.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: white;
+}
+
+.page-btn.ellipsis {
+  border: none;
+  background: transparent;
+  cursor: default;
+}
+
+.page-btn.ellipsis:hover {
+  background: transparent;
+  color: var(--color-text-primary);
+}
+
+.page-size-select {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: 13px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  margin-left: var(--spacing-md);
+}
+
+.page-size-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
 }
 </style>

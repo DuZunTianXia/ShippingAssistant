@@ -234,7 +234,8 @@ const copyFieldIds = ref([])
 const fetchFields = async () => {
   try {
     const response = await axios.get(`/api/products/${productId.value}/fields`)
-    fields.value = response.data
+    // 处理新的分页响应格式
+    fields.value = response.data.items || response.data
   } catch (error) {
     ElMessage.error('获取字段列表失败')
   }

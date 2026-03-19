@@ -51,24 +51,24 @@
 
     <!-- 状态筛选 -->
     <view class="status-filter" v-if="records.length > 0">
-      <view 
-        class="filter-tab" 
+      <view
+        class="filter-tab"
         :class="{ active: statusFilter === 'all' }"
-        @click="statusFilter = 'all'"
+        @click="handleStatusFilterChange('all')"
       >
         全部
       </view>
-      <view 
-        class="filter-tab" 
+      <view
+        class="filter-tab"
         :class="{ active: statusFilter === 'pending' }"
-        @click="statusFilter = 'pending'"
+        @click="handleStatusFilterChange('pending')"
       >
         待发货
       </view>
-      <view 
-        class="filter-tab" 
+      <view
+        class="filter-tab"
         :class="{ active: statusFilter === 'shipped' }"
-        @click="statusFilter = 'shipped'"
+        @click="handleStatusFilterChange('shipped')"
       >
         已发货
       </view>
@@ -236,6 +236,15 @@
         </view>
       </view>
       <view class="safe-area-bottom"></view>
+
+      <!-- 加载更多按钮 -->
+      <view class="load-more" v-if="hasMore && !loadingMore" @click="loadMoreRecords">
+        <text>加载更多</text>
+      </view>
+      <view class="loading-more" v-if="loadingMore">
+        <view class="loading-spinner small"></view>
+        <text>加载中...</text>
+      </view>
     </scroll-view>
 
     <!-- 添加按钮 -->
@@ -343,7 +352,7 @@
 </template>
 
 <script>
-import { getRecords, createRecord, updateRecord, deleteRecord, getFields, getRecordStats } from '@/utils/api.js'
+import { getRecords, createRecord, updateRecord, deleteRecord, getFields, getRecordStats, batchGetRecords } from '@/utils/api.js'
 import SvgIcon from '@/components/SvgIcon.vue'
 
 export default {
@@ -362,6 +371,7 @@ export default {
       statusFilter: 'pending',
       maxDisplayFields: 3,
       loading: false,
+      loadingMore: false,
       stats: { total: 0, shipped: 0, pending: 0 },
       recordForm: {
         id: null,
@@ -374,13 +384,20 @@ export default {
       selectCount: '', // 输入的选择数量
       // 搜索相关
       searchKeyword: '',
+      debouncedSearch: '',
+      searchTimer: null,
       searchFieldIndex: 0,
       // 批量发货加载状态
       batchShippingLoading: false,
       // 附加信息相关
       attachmentText: '',
-      attachEnabled: false,
-      showAttachModal: false
+      attachEnabled: true, // 默认开启追加功能
+      showAttachModal: false,
+      // 分页相关
+      currentPage: 1,
+      pageSize: 20,
+      pagination: { total: 0, totalPages: 0 },
+      hasMore: false
     }
   },
 
@@ -474,13 +491,71 @@ export default {
 
     async loadRecords() {
       try {
-        const data = await getRecords(this.productId)
-        this.records = data
+        this.loading = true
+        const params = {
+          page: this.currentPage,
+          pageSize: this.pageSize
+        }
+        if (this.debouncedSearch) {
+          params.search = this.debouncedSearch
+        }
+        if (this.statusFilter !== 'all') {
+          params.status = this.statusFilter
+        }
+        const data = await getRecords(this.productId, params)
+
+        // 处理新的分页响应格式
+        if (data.items && data.pagination) {
+          if (this.currentPage === 1) {
+            this.records = data.items
+          } else {
+            this.records = [...this.records, ...data.items]
+          }
+          this.pagination = data.pagination
+          this.hasMore = this.currentPage < data.pagination.totalPages
+        } else {
+          // 兼容旧的非分页格式
+          this.records = Array.isArray(data) ? data : []
+          this.pagination = { total: this.records.length, totalPages: 1 }
+          this.hasMore = false
+        }
       } catch (error) {
         uni.showToast({
           title: '加载失败',
           icon: 'none'
         })
+      } finally {
+        this.loading = false
+      }
+    },
+
+    async loadMoreRecords() {
+      if (this.loadingMore || !this.hasMore) return
+      try {
+        this.loadingMore = true
+        this.currentPage++
+        const params = {
+          page: this.currentPage,
+          pageSize: this.pageSize
+        }
+        if (this.debouncedSearch) {
+          params.search = this.debouncedSearch
+        }
+        if (this.statusFilter !== 'all') {
+          params.status = this.statusFilter
+        }
+        const data = await getRecords(this.productId, params)
+
+        if (data.items && data.pagination) {
+          this.records = [...this.records, ...data.items]
+          this.pagination = data.pagination
+          this.hasMore = this.currentPage < data.pagination.totalPages
+        }
+      } catch (error) {
+        this.currentPage-- // 加载失败回退页码
+        uni.showToast({ title: '加载更多失败', icon: 'none' })
+      } finally {
+        this.loadingMore = false
       }
     },
 
@@ -518,9 +593,14 @@ export default {
       if (attachText) {
         this.attachmentText = attachText
       }
+      
       const attachEnabled = uni.getStorageSync(`attach_enabled_${this.productId}`)
-      if (attachEnabled !== '') {
-        this.attachEnabled = attachEnabled === 'true' || attachEnabled === true
+      // 只有当明确存储了 'false' 时才设置为 false，其他情况都保持默认的 true
+      if (attachEnabled === 'false') {
+        this.attachEnabled = false
+      } else {
+        // 保持默认的 true 状态
+        this.attachEnabled = true
       }
     },
 
@@ -784,11 +864,27 @@ export default {
       if (this.batchMode) {
         this.exitBatchMode()
       }
+      // 防抖处理
+      clearTimeout(this.searchTimer)
+      this.searchTimer = setTimeout(() => {
+        this.debouncedSearch = this.searchKeyword
+        this.currentPage = 1
+        this.loadRecords()
+      }, 300)
     },
 
     clearSearch() {
       this.searchKeyword = ''
+      this.debouncedSearch = ''
+      this.currentPage = 1
       this.searchFieldIndex = 0
+      this.loadRecords()
+    },
+
+    handleStatusFilterChange(status) {
+      this.statusFilter = status
+      this.currentPage = 1
+      this.loadRecords()
     },
 
     batchCopy() {
@@ -953,20 +1049,29 @@ export default {
     },
 
     // 批量导出为TXT
-    batchExportTxt() {
+    async batchExportTxt() {
       if (this.selectedRecordIds.length === 0) {
         uni.showToast({ title: '请先选择记录', icon: 'none' })
         return
       }
 
-      const selectedRecords = this.records.filter(r => this.selectedRecordIds.includes(r.id))
+      // 通过批量API获取完整的选中记录（支持跨页选择）
+      let selectedRecords
+      try {
+        const res = await batchGetRecords(this.productId, this.selectedRecordIds)
+        selectedRecords = res.items || []
+      } catch (error) {
+        // 如果批量接口失败，尝试用本地数据
+        selectedRecords = this.records.filter(r => this.selectedRecordIds.includes(r.id))
+      }
+
       const lines = []
 
       selectedRecords.forEach((record, index) => {
         if (index > 0) {
           lines.push('') // 记录之间用空行分隔
         }
-        
+
         lines.push(`--- 记录 #${index + 1} ---`)
         this.fieldList.forEach(field => {
           const value = this.getFieldValue(record, field) || ''
@@ -982,9 +1087,9 @@ export default {
 
       const content = lines.join('\n')
       const fileName = `batch_export_${this.productName}_${Date.now()}.txt`
-      
+
       this.saveTxtFile(content, fileName)
-      
+
       // 询问是否标记为已发货
       const pendingRecords = selectedRecords.filter(r => r.status === 'pending')
       if (pendingRecords.length > 0) {

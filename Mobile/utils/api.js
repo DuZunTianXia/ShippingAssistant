@@ -1,6 +1,6 @@
 // API 基础配置
 // 开发环境使用本地代理，生产环境使用 Worker URL
-const API_BASE_URL = 'https://shippingassistant.3257479103.workers.dev'
+const API_BASE_URL = 'http://product.langshen.xyz'
 
 // 统一请求封装
 const request = (url, method = 'GET', data = null) => {
@@ -61,8 +61,19 @@ export const deleteField = (id) => {
 }
 
 // ==================== 发货记录管理 ====================
-export const getRecords = (productId) => {
-  return request(`/api/products/${productId}/records`)
+export const getRecords = (productId, params = {}) => {
+  const queryParams = []
+  if (params.page) queryParams.push(`page=${params.page}`)
+  if (params.pageSize) queryParams.push(`pageSize=${params.pageSize}`)
+  if (params.search) queryParams.push(`search=${encodeURIComponent(params.search)}`)
+  if (params.status) queryParams.push(`status=${params.status}`)
+  const queryString = queryParams.length > 0 ? `?${queryParams.join('&')}` : ''
+  return request(`/api/products/${productId}/records${queryString}`)
+}
+
+// 批量获取记录（根据ID列表）
+export const batchGetRecords = (productId, ids) => {
+  return request(`/api/products/${productId}/records/batch`, 'POST', { ids })
 }
 
 export const createRecord = (productId, data) => {

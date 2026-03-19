@@ -47,7 +47,7 @@ async function handleAPIRequest(request, env, url, corsHeaders) {
 
   // 商品相关
   if (path === '/api/products' && request.method === 'GET') {
-    return handleGetProducts(env, corsHeaders)
+    return handleGetProducts(env, corsHeaders, url)
   }
   if (path === '/api/products' && request.method === 'POST') {
     return handleCreateProduct(request, env, corsHeaders)
@@ -74,7 +74,7 @@ async function handleAPIRequest(request, env, url, corsHeaders) {
   // 字段相关
   if (path.match(/^\/api\/products\/\d+\/fields$/) && request.method === 'GET') {
     const productId = path.split('/')[3]
-    return handleGetFields(productId, env, corsHeaders)
+    return handleGetFields(productId, env, corsHeaders, url)
   }
   if (path.match(/^\/api\/products\/\d+\/fields$/) && request.method === 'POST') {
     const productId = path.split('/')[3]
@@ -92,7 +92,7 @@ async function handleAPIRequest(request, env, url, corsHeaders) {
   // 记录相关
   if (path.match(/^\/api\/products\/\d+\/records$/) && request.method === 'GET') {
     const productId = path.split('/')[3]
-    return handleGetRecords(productId, env, corsHeaders)
+    return handleGetRecords(productId, env, corsHeaders, url)
   }
   if (path.match(/^\/api\/products\/\d+\/records\/check-duplicate$/) && request.method === 'POST') {
     const productId = path.split('/')[3]
@@ -119,6 +119,12 @@ async function handleAPIRequest(request, env, url, corsHeaders) {
     return handleGetRecordByOrderId(orderId, env, corsHeaders)
   }
 
+  // 批量获取记录（根据ID列表，用于跨页选择后的批量操作）
+  if (path.match(/^\/api\/products\/\d+\/records\/batch$/) && request.method === 'POST') {
+    const productId = path.split('/')[3]
+    return handleBatchGetRecords(productId, request, env, corsHeaders)
+  }
+
   // 健康检查
   if (path === '/api/health') {
     return new Response(JSON.stringify({ 
@@ -142,12 +148,36 @@ async function handleAPIRequest(request, env, url, corsHeaders) {
   })
 }
 
+// 解析查询参数
+function parseQueryParams(url) {
+  const params = {}
+  const searchParams = url.searchParams
+  if (searchParams.has('page')) params.page = parseInt(searchParams.get('page'), 10) || 1
+  if (searchParams.has('pageSize')) params.pageSize = parseInt(searchParams.get('pageSize'), 10) || 20
+  if (searchParams.has('search')) params.search = searchParams.get('search') || ''
+  if (searchParams.has('status')) params.status = searchParams.get('status') || ''
+  return params
+}
+
 // 处理静态文件
 async function handleStaticAsset(request, env, path, corsHeaders) {
+  console.log('Handling static asset:', path)
+  console.log('ASSETS binding available:', !!env.ASSETS)
+  
   // 对于根路径，直接返回 index.html
   if (path === '/') {
     try {
+      if (!env.ASSETS) {
+        console.error('ASSETS binding not available')
+        return new Response('ASSETS binding not configured', { 
+          status: 500, 
+          headers: corsHeaders 
+        })
+      }
+      
       const indexFile = await env.ASSETS.get('index.html')
+      console.log('Index file found:', !!indexFile)
+      
       if (indexFile) {
         return new Response(indexFile, {
           headers: {
@@ -159,7 +189,6 @@ async function handleStaticAsset(request, env, path, corsHeaders) {
     } catch (error) {
       console.error('Error loading index.html:', error)
     }
-    return new Response('Not Found', { status: 404, headers: corsHeaders })
   }
 
   // 检查是否是静态资源文件（有文件扩展名）
@@ -168,8 +197,18 @@ async function handleStaticAsset(request, env, path, corsHeaders) {
   if (hasExtension) {
     // 尝试获取静态资源文件
     try {
+      if (!env.ASSETS) {
+        return new Response('ASSETS binding not configured', { 
+          status: 500, 
+          headers: corsHeaders 
+        })
+      }
+      
       const assetPath = path.startsWith('/') ? path.slice(1) : path
+      console.log('Looking for asset:', assetPath)
+      
       const object = await env.ASSETS.get(assetPath)
+      console.log('Asset found:', !!object)
 
       if (object !== null) {
         const headers = new Headers(corsHeaders)
@@ -182,12 +221,22 @@ async function handleStaticAsset(request, env, path, corsHeaders) {
     }
     
     // 静态资源不存在，返回404
-    return new Response('Not Found', { status: 404, headers: corsHeaders })
+    return new Response('Static asset not found', { status: 404, headers: corsHeaders })
   }
 
   // 对于所有其他路径（SPA路由），返回 index.html
   try {
+    if (!env.ASSETS) {
+      console.error('ASSETS binding not available for SPA route')
+      return new Response('ASSETS binding not configured', { 
+        status: 500, 
+        headers: corsHeaders 
+      })
+    }
+    
     const indexFile = await env.ASSETS.get('index.html')
+    console.log('Index file for SPA route found:', !!indexFile)
+    
     if (indexFile) {
       return new Response(indexFile, {
         headers: {
@@ -200,7 +249,31 @@ async function handleStaticAsset(request, env, path, corsHeaders) {
     console.error('Error loading index.html for SPA route:', error)
   }
 
-  return new Response('Not Found', { status: 404, headers: corsHeaders })
+  // 如果所有尝试都失败，返回简单的HTML页面
+  const fallbackHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Shipping Assistant</title>
+    <meta charset="utf-8">
+</head>
+<body>
+    <div id="app">
+        <h1>Static Assets Not Available</h1>
+        <p>The static assets are not properly configured or uploaded.</p>
+        <p>Please check the deployment configuration.</p>
+        <p>Path requested: ${path}</p>
+        <p>ASSETS binding: ${env.ASSETS ? 'Available' : 'Not Available'}</p>
+    </div>
+</body>
+</html>`
+
+  return new Response(fallbackHtml, {
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'text/html; charset=utf-8'
+    }
+  })
 }
 
 function getContentType(path) {
@@ -225,9 +298,45 @@ function getContentType(path) {
 }
 
 // ==================== 商品管理 ====================
-async function handleGetProducts(env, headers) {
-  const result = await env.DB.prepare('SELECT * FROM products ORDER BY created_at DESC').all()
-  return new Response(JSON.stringify(result.results || result), {
+async function handleGetProducts(env, headers, url) {
+  const { page = 1, pageSize = 20, search = '' } = parseQueryParams(url)
+  const offset = (page - 1) * pageSize
+
+  let query = 'SELECT * FROM products'
+  let countQuery = 'SELECT COUNT(*) as total FROM products'
+  const params = []
+  const countParams = []
+
+  // 添加模糊搜索
+  if (search) {
+    const searchCondition = " WHERE (name LIKE ? OR description LIKE ?)"
+    query += searchCondition
+    countQuery += searchCondition
+    const searchPattern = `%${search}%`
+    params.push(searchPattern, searchPattern)
+    countParams.push(searchPattern, searchPattern)
+  }
+
+  query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+  params.push(pageSize, offset)
+
+  // 获取总数
+  const countResult = await env.DB.prepare(countQuery).bind(...countParams).first()
+  const total = countResult?.total || 0
+
+  // 获取分页数据
+  const result = await env.DB.prepare(query).bind(...params).all()
+  const items = result.results || result
+
+  return new Response(JSON.stringify({
+    items,
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize)
+    }
+  }), {
     headers: { ...headers, 'Content-Type': 'application/json' }
   })
 }
@@ -350,11 +459,44 @@ async function handleDeleteProduct(id, env, headers) {
 }
 
 // ==================== 字段管理 ====================
-async function handleGetFields(productId, env, headers) {
-  const result = await env.DB.prepare(
-    'SELECT * FROM custom_fields WHERE product_id = ? ORDER BY sort_order ASC'
-  ).bind(productId).all()
-  return new Response(JSON.stringify(result.results || result), {
+async function handleGetFields(productId, env, headers, url) {
+  const { page = 1, pageSize = 50, search = '' } = parseQueryParams(url)
+  const offset = (page - 1) * pageSize
+
+  let query = 'SELECT * FROM custom_fields WHERE product_id = ?'
+  let countQuery = 'SELECT COUNT(*) as total FROM custom_fields WHERE product_id = ?'
+  const params = [productId]
+  const countParams = [productId]
+
+  // 添加模糊搜索（搜索 name 或 label）
+  if (search) {
+    query += " AND (name LIKE ? OR label LIKE ?)"
+    countQuery += " AND (name LIKE ? OR label LIKE ?)"
+    const searchPattern = `%${search}%`
+    params.push(searchPattern, searchPattern)
+    countParams.push(searchPattern, searchPattern)
+  }
+
+  // 获取总数
+  const countResult = await env.DB.prepare(countQuery).bind(...countParams).first()
+  const total = countResult?.total || 0
+
+  // 获取分页数据
+  query += ' ORDER BY sort_order ASC LIMIT ? OFFSET ?'
+  params.push(pageSize, offset)
+
+  const result = await env.DB.prepare(query).bind(...params).all()
+  const items = result.results || result
+
+  return new Response(JSON.stringify({
+    items,
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize)
+    }
+  }), {
     headers: { ...headers, 'Content-Type': 'application/json' }
   })
 }
@@ -417,15 +559,55 @@ async function handleUpdateField(id, request, env, headers) {
 }
 
 // ==================== 记录管理 ====================
-async function handleGetRecords(productId, env, headers) {
-  const result = await env.DB.prepare(
-    'SELECT * FROM shipping_records WHERE product_id = ? ORDER BY created_at DESC'
-  ).bind(productId).all()
+async function handleGetRecords(productId, env, headers, url) {
+  const { page = 1, pageSize = 20, search = '', status = '' } = parseQueryParams(url)
+  const offset = (page - 1) * pageSize
+
+  let query = 'SELECT * FROM shipping_records WHERE product_id = ?'
+  let countQuery = 'SELECT COUNT(*) as total FROM shipping_records WHERE product_id = ?'
+  const params = [productId]
+  const countParams = [productId]
+
+  // 添加状态筛选
+  if (status) {
+    query += " AND status = ?"
+    countQuery += " AND status = ?"
+    params.push(status)
+    countParams.push(status)
+  }
+
+  // 添加模糊搜索（搜索 order_id 或 data JSON 中的内容）
+  if (search) {
+    query += " AND (order_id LIKE ? OR data LIKE ?)"
+    countQuery += " AND (order_id LIKE ? OR data LIKE ?)"
+    const searchPattern = `%${search}%`
+    params.push(searchPattern, searchPattern)
+    countParams.push(searchPattern, searchPattern)
+  }
+
+  // 获取总数
+  const countResult = await env.DB.prepare(countQuery).bind(...countParams).first()
+  const total = countResult?.total || 0
+
+  // 获取分页数据
+  query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+  params.push(pageSize, offset)
+
+  const result = await env.DB.prepare(query).bind(...params).all()
   const records = (result.results || result).map(record => ({
     ...record,
     data: record.data ? JSON.parse(record.data) : {}
   }))
-  return new Response(JSON.stringify(records), {
+
+  return new Response(JSON.stringify({
+    items: records,
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize)
+    }
+  }), {
     headers: { ...headers, 'Content-Type': 'application/json' }
   })
 }
@@ -773,6 +955,49 @@ async function handleGetRecordByOrderId(orderId, env, headers) {
   return new Response(JSON.stringify(records), {
     headers: { ...headers, 'Content-Type': 'application/json' }
   })
+}
+
+// 批量获取记录（根据ID列表）
+async function handleBatchGetRecords(productId, request, env, headers) {
+  try {
+    const body = await request.json()
+    const { ids } = body
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return new Response(JSON.stringify({ error: 'Missing or invalid ids array' }), {
+        status: 400,
+        headers: { ...headers, 'Content-Type': 'application/json' }
+      })
+    }
+
+    // 限制批量查询数量
+    const limit = 500
+    const safeIds = ids.slice(0, limit)
+
+    // 构建 IN 查询
+    const placeholders = safeIds.map(() => '?').join(',')
+    const result = await env.DB.prepare(
+      `SELECT * FROM shipping_records WHERE product_id = ? AND id IN (${placeholders})`
+    ).bind(productId, ...safeIds).all()
+
+    const records = (result.results || result).map(record => ({
+      ...record,
+      data: record.data ? JSON.parse(record.data) : {}
+    }))
+
+    return new Response(JSON.stringify({
+      items: records,
+      total: records.length
+    }), {
+      headers: { ...headers, 'Content-Type': 'application/json' }
+    })
+  } catch (error) {
+    console.error('Batch get records error:', error)
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: { ...headers, 'Content-Type': 'application/json' }
+    })
+  }
 }
 
 // 字段迁移：修复name/label颠倒问题
